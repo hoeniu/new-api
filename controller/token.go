@@ -159,6 +159,9 @@ func GetTokenUsage(c *gin.Context) {
 			"unlimited_quota":      token.UnlimitedQuota,
 			"model_limits":         token.GetModelLimitsMap(),
 			"model_limits_enabled": token.ModelLimitsEnabled,
+			"rate_limit_rpm":       token.RateLimitRpm,
+			"rate_limit_tpm":       token.RateLimitTpm,
+			"model_quota_limits":   token.ModelQuotaLimits,
 			"expires_at":           expiredAt,
 		},
 	})
@@ -201,6 +204,24 @@ func AddToken(c *gin.Context) {
 		})
 		return
 	}
+	if len(token.ModelQuotaLimits) > 262144 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if token.RateLimitRpm < 0 || token.RateLimitTpm < 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if token.RateLimitRpm > 10000000 || token.RateLimitTpm > 1000000000 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "rate limit values too large"})
+		return
+	}
+	if strings.TrimSpace(token.ModelQuotaLimits) != "" {
+		if _, err := token.ParseModelQuotaLimits(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	key, err := common.GenerateKey()
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgTokenGenerateFailed)
@@ -221,6 +242,9 @@ func AddToken(c *gin.Context) {
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
+		RateLimitRpm:       token.RateLimitRpm,
+		RateLimitTpm:       token.RateLimitTpm,
+		ModelQuotaLimits:   strings.TrimSpace(token.ModelQuotaLimits),
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -271,6 +295,24 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
+	if len(token.ModelQuotaLimits) > 262144 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if token.RateLimitRpm < 0 || token.RateLimitTpm < 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if token.RateLimitRpm > 10000000 || token.RateLimitTpm > 1000000000 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "rate limit values too large"})
+		return
+	}
+	if strings.TrimSpace(token.ModelQuotaLimits) != "" {
+		if _, err := token.ParseModelQuotaLimits(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	cleanToken, err := model.GetTokenByIds(token.Id, userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -299,6 +341,9 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		cleanToken.RateLimitRpm = token.RateLimitRpm
+		cleanToken.RateLimitTpm = token.RateLimitTpm
+		cleanToken.ModelQuotaLimits = strings.TrimSpace(token.ModelQuotaLimits)
 	}
 	err = cleanToken.Update()
 	if err != nil {

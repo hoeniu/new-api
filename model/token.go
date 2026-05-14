@@ -28,7 +28,21 @@ type Token struct {
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
-	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	// RateLimitRpm / RateLimitTpm: per-token limits in a rolling 60s window (requires Redis).
+	// 0 means unlimited.
+	RateLimitRpm int `json:"rate_limit_rpm" gorm:"default:0"`
+	RateLimitTpm int `json:"rate_limit_tpm" gorm:"default:0"`
+	// ModelQuotaLimits: JSON array of { "model": "gpt-4o", "max_tokens": 100000000, "max_calls": 1000 }.
+	// max_tokens / max_calls 0 = unlimited for that metric. Model name matched after FormatMatchingModelName.
+	ModelQuotaLimits string `json:"model_quota_limits" gorm:"type:text"`
+	DeletedAt        gorm.DeletedAt `gorm:"index"`
+}
+
+// TokenModelQuotaEntry defines optional per-model caps for a token (cumulative usage).
+type TokenModelQuotaEntry struct {
+	Model     string `json:"model"`
+	MaxTokens int64  `json:"max_tokens"` // 0 = unlimited
+	MaxCalls  int    `json:"max_calls"`  // 0 = unlimited
 }
 
 func (token *Token) Clean() {
@@ -295,7 +309,8 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry",
+		"rate_limit_rpm", "rate_limit_tpm", "model_quota_limits").Updates(token).Error
 	return err
 }
 

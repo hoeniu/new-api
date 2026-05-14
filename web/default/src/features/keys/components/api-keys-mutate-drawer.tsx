@@ -17,13 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useState, type ReactNode } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import {
   ChevronDown,
+  Gauge,
   KeyRound,
+  Plus,
   Settings2,
+  Trash2,
   WalletCards,
   type LucideIcon,
 } from 'lucide-react'
@@ -156,6 +159,11 @@ export function ApiKeysMutateDrawer({
   const form = useForm<ApiKeyFormValues>({
     resolver: zodResolver(apiKeyFormSchema),
     defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
+  })
+
+  const modelQuotaArray = useFieldArray({
+    control: form.control,
+    name: 'model_quota_limits',
   })
 
   // Load existing data when updating
@@ -564,6 +572,179 @@ export function ApiKeysMutateDrawer({
                         </FormItem>
                       )}
                     />
+
+                    <div className='space-y-3 border-t pt-3'>
+                      <div className='flex items-center gap-2'>
+                        <Gauge className='text-muted-foreground size-4' />
+                        <h4 className='text-sm font-medium'>
+                          {t('Per-key RPM / TPM')}
+                        </h4>
+                      </div>
+                      <p className='text-muted-foreground text-xs'>
+                        {t(
+                          'Per-key rate limits use a ~60s rolling window and require Redis.'
+                        )}
+                      </p>
+                      <div className='grid gap-3 sm:grid-cols-2'>
+                        <FormField
+                          control={form.control}
+                          name='rate_limit_rpm'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {t('Per-key RPM (0 = unlimited)')}
+                              </FormLabel>
+                              <FormControl>
+                                <Input
+                                  type='number'
+                                  min={0}
+                                  value={field.value}
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      parseInt(e.target.value, 10) || 0
+                                    )
+                                  }
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name='rate_limit_tpm'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {t('Per-key TPM (0 = unlimited)')}
+                              </FormLabel>
+                              <FormControl>
+                                <Input
+                                  type='number'
+                                  min={0}
+                                  value={field.value}
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      parseInt(e.target.value, 10) || 0
+                                    )
+                                  }
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className='space-y-2 border-t pt-3'>
+                        <h4 className='text-sm font-medium'>
+                          {t(
+                            'Per-model cumulative limits (lifetime for this key)'
+                          )}
+                        </h4>
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'Per row: token amount cap and call amount cap; 0 = unlimited for that metric.'
+                          )}
+                        </p>
+                        {modelQuotaArray.fields.map((row, index) => (
+                          <div
+                            key={row.id}
+                            className='bg-muted/30 flex flex-col gap-2 rounded-lg border p-2 sm:flex-row sm:items-end'
+                          >
+                            <FormField
+                              control={form.control}
+                              name={`model_quota_limits.${index}.model`}
+                              render={({ field }) => (
+                                <FormItem className='min-w-0 flex-1'>
+                                  <FormLabel className='text-xs'>
+                                    {t('Model')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder='gpt-4o' />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name={`model_quota_limits.${index}.max_tokens`}
+                              render={({ field }) => (
+                                <FormItem className='w-full sm:w-40'>
+                                  <FormLabel className='text-xs'>
+                                    {t('Token amount cap (cumulative)')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type='number'
+                                      min={0}
+                                      value={field.value}
+                                      onChange={(e) =>
+                                        field.onChange(
+                                          parseInt(e.target.value, 10) || 0
+                                        )
+                                      }
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name={`model_quota_limits.${index}.max_calls`}
+                              render={({ field }) => (
+                                <FormItem className='w-full sm:w-36'>
+                                  <FormLabel className='text-xs'>
+                                    {t('Call amount cap (cumulative)')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type='number'
+                                      min={0}
+                                      value={field.value}
+                                      onChange={(e) =>
+                                        field.onChange(
+                                          parseInt(e.target.value, 10) || 0
+                                        )
+                                      }
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <Button
+                              type='button'
+                              variant='ghost'
+                              size='icon'
+                              className='shrink-0 self-end sm:self-center'
+                              onClick={() => modelQuotaArray.remove(index)}
+                              aria-label={t('Delete')}
+                            >
+                              <Trash2 className='size-4' />
+                            </Button>
+                          </div>
+                        ))}
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          className='w-full sm:w-auto'
+                          onClick={() =>
+                            modelQuotaArray.append({
+                              model: '',
+                              max_tokens: 0,
+                              max_calls: 0,
+                            })
+                          }
+                        >
+                          <Plus className='mr-1 size-4' />
+                          {t('Add model quota row')}
+                        </Button>
+                      </div>
+                    </div>
 
                     <FormField
                       control={form.control}

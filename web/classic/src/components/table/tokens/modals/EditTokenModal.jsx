@@ -46,6 +46,7 @@ import {
   Col,
   Row,
   InputNumber,
+  Select,
 } from '@douyinfe/semi-ui';
 import {
   IconCreditCard,
@@ -68,7 +69,45 @@ const EditTokenModal = (props) => {
   const [models, setModels] = useState([]);
   const [groups, setGroups] = useState([]);
   const [showQuotaInput, setShowQuotaInput] = useState(false);
+  const [modelQuotaLimits, setModelQuotaLimits] = useState([]);
   const isEdit = props.editingToken.id !== undefined;
+
+  const parseModelQuotaLimitsFromApi = (raw) => {
+    if (raw == null || String(raw).trim() === '') return [];
+    try {
+      const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!Array.isArray(arr)) return [];
+      return arr.map((e) => ({
+        model: e.model != null ? String(e.model) : '',
+        max_tokens:
+          e.max_tokens != null ? Math.max(0, Number(e.max_tokens) || 0) : 0,
+        max_calls:
+          e.max_calls != null ? Math.max(0, parseInt(e.max_calls, 10) || 0) : 0,
+      }));
+    } catch {
+      return [];
+    }
+  };
+
+  const updateModelQuotaRow = (index, key, val) => {
+    setModelQuotaLimits((prev) => {
+      const next = [...prev];
+      if (!next[index]) return prev;
+      next[index] = { ...next[index], [key]: val };
+      return next;
+    });
+  };
+
+  const addModelQuotaRow = () => {
+    setModelQuotaLimits((p) => [
+      ...p,
+      { model: '', max_tokens: 0, max_calls: 0 },
+    ]);
+  };
+
+  const removeModelQuotaRow = (index) => {
+    setModelQuotaLimits((p) => p.filter((_, i) => i !== index));
+  };
 
   const getInitValues = () => ({
     name: '',
@@ -82,6 +121,8 @@ const EditTokenModal = (props) => {
     group: '',
     cross_group_retry: false,
     tokenCount: 1,
+    rate_limit_rpm: 0,
+    rate_limit_tpm: 0,
   });
 
   const handleCancel = () => {
@@ -172,6 +213,9 @@ const EditTokenModal = (props) => {
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
+      setModelQuotaLimits(parseModelQuotaLimitsFromApi(data.model_quota_limits));
+      data.rate_limit_rpm = data.rate_limit_rpm ?? 0;
+      data.rate_limit_tpm = data.rate_limit_tpm ?? 0;
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
       }
@@ -185,6 +229,7 @@ const EditTokenModal = (props) => {
     if (formApiRef.current) {
       if (!isEdit) {
         formApiRef.current.setValues(getInitValues());
+        setModelQuotaLimits([]);
       }
     }
     loadModels();
@@ -197,9 +242,11 @@ const EditTokenModal = (props) => {
         loadToken();
       } else {
         formApiRef.current?.setValues(getInitValues());
+        setModelQuotaLimits([]);
       }
     } else {
       formApiRef.current?.reset();
+      setModelQuotaLimits([]);
     }
   }, [props.visiable, props.editingToken.id]);
 
@@ -213,6 +260,17 @@ const EditTokenModal = (props) => {
       );
     }
     return result;
+  };
+
+  const buildModelQuotaLimitsPayload = () => {
+    const limits = modelQuotaLimits
+      .filter((r) => r.model && String(r.model).trim())
+      .map((r) => ({
+        model: String(r.model).trim(),
+        max_tokens: Math.max(0, Number(r.max_tokens) || 0),
+        max_calls: Math.max(0, parseInt(r.max_calls, 10) || 0),
+      }));
+    return limits.length > 0 ? JSON.stringify(limits) : '';
   };
 
   const submit = async (values) => {
@@ -238,6 +296,15 @@ const EditTokenModal = (props) => {
       }
       localInputs.model_limits = localInputs.model_limits.join(',');
       localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
+      localInputs.rate_limit_rpm = Math.max(
+        0,
+        parseInt(localInputs.rate_limit_rpm, 10) || 0,
+      );
+      localInputs.rate_limit_tpm = Math.max(
+        0,
+        parseInt(localInputs.rate_limit_tpm, 10) || 0,
+      );
+      localInputs.model_quota_limits = buildModelQuotaLimitsPayload();
       let res = await API.put(`/api/token/`, {
         ...localInputs,
         id: parseInt(props.editingToken.id),
@@ -282,6 +349,15 @@ const EditTokenModal = (props) => {
         }
         localInputs.model_limits = localInputs.model_limits.join(',');
         localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
+        localInputs.rate_limit_rpm = Math.max(
+          0,
+          parseInt(localInputs.rate_limit_rpm, 10) || 0,
+        );
+        localInputs.rate_limit_tpm = Math.max(
+          0,
+          parseInt(localInputs.rate_limit_tpm, 10) || 0,
+        );
+        localInputs.model_quota_limits = buildModelQuotaLimitsPayload();
         let res = await API.post(`/api/token/`, localInputs);
         const { success, message } = res.data;
         if (success) {
@@ -626,6 +702,126 @@ const EditTokenModal = (props) => {
                       style={{ width: '100%' }}
                     />
                   </Col>
+
+                  <Col span={24}>
+                    <Text className='text-sm font-medium block mb-1'>
+                      {t('每分钟速率上限')}
+                    </Text>
+                    <div className='text-xs text-gray-600 mb-2'>
+                      {t('0表示不限制RPM与TPM仅在启用Redis时生效')}
+                    </div>
+                    <Row gutter={12}>
+                      <Col xs={24} sm={12}>
+                        <Form.InputNumber
+                          field='rate_limit_rpm'
+                          label={t('单Key RPM')}
+                          min={0}
+                          step={1}
+                          style={{ width: '100%' }}
+                        />
+                      </Col>
+                      <Col xs={24} sm={12}>
+                        <Form.InputNumber
+                          field='rate_limit_tpm'
+                          label={t('单Key TPM')}
+                          min={0}
+                          step={1000}
+                          style={{ width: '100%' }}
+                        />
+                      </Col>
+                    </Row>
+                  </Col>
+
+                  <Col span={24}>
+                    <Text className='text-sm font-medium block mb-1'>
+                      {t('按模型累计用量上限')}
+                    </Text>
+                    <div className='text-xs text-gray-600 mb-2'>
+                      {t('按模型限制说明副标题')}
+                    </div>
+                    <Row gutter={8} className='mb-1 text-xs text-gray-600'>
+                      <Col xs={24} sm={10}>{t('模型')}</Col>
+                      <Col xs={12} sm={6}>{t('Token量限制')}</Col>
+                      <Col xs={12} sm={6}>{t('调用量限制')}</Col>
+                      <Col xs={0} sm={2} />
+                    </Row>
+                    {modelQuotaLimits.length === 0 ? (
+                      <div className='text-xs text-gray-500 mb-2'>
+                        {t('暂无模型限额行')}
+                      </div>
+                    ) : (
+                      modelQuotaLimits.map((row, idx) => (
+                        <Row key={idx} gutter={8} className='mb-2 items-center'>
+                          <Col xs={24} sm={10}>
+                            <Select
+                              value={row.model || undefined}
+                              placeholder={t('请选择模型')}
+                              optionList={models}
+                              filter={selectFilter}
+                              searchPosition='dropdown'
+                              showClear
+                              style={{ width: '100%' }}
+                              onChange={(v) =>
+                                updateModelQuotaRow(idx, 'model', v || '')
+                              }
+                            />
+                          </Col>
+                          <Col xs={12} sm={6}>
+                            <InputNumber
+                              value={row.max_tokens}
+                              min={0}
+                              step={100000}
+                              placeholder={t('0为不限制')}
+                              style={{ width: '100%' }}
+                              onChange={(v) =>
+                                updateModelQuotaRow(
+                                  idx,
+                                  'max_tokens',
+                                  v === '' || v == null ? 0 : v,
+                                )
+                              }
+                            />
+                          </Col>
+                          <Col xs={12} sm={6}>
+                            <InputNumber
+                              value={row.max_calls}
+                              min={0}
+                              step={1}
+                              placeholder={t('0为不限制')}
+                              style={{ width: '100%' }}
+                              onChange={(v) =>
+                                updateModelQuotaRow(
+                                  idx,
+                                  'max_calls',
+                                  v === '' || v == null ? 0 : v,
+                                )
+                              }
+                            />
+                          </Col>
+                          <Col xs={24} sm={2}>
+                            <Button
+                              type='danger'
+                              theme='light'
+                              size='small'
+                              onClick={() => removeModelQuotaRow(idx)}
+                            >
+                              {t('删除')}
+                            </Button>
+                          </Col>
+                        </Row>
+                      ))
+                    )}
+                    <Button
+                      theme='light'
+                      type='primary'
+                      size='small'
+                      className='mt-1'
+                      onClick={addModelQuotaRow}
+                    >
+                      {t('追加模型额度')}
+                    </Button>
+                  </Col>
+
                   <Col span={24}>
                     <Form.TextArea
                       field='allow_ips'

@@ -45,6 +45,9 @@ export const apiKeySchema = z.object({
   model_limits_enabled: z.boolean(),
   model_limits: z.string().nullish().default(''),
   allow_ips: z.string().nullish().default(''),
+  rate_limit_rpm: z.coerce.number().int().min(0).catch(0),
+  rate_limit_tpm: z.coerce.number().int().min(0).catch(0),
+  model_quota_limits: z.string().nullish().default(''),
 })
 
 export type ApiKey = z.infer<typeof apiKeySchema>
@@ -92,6 +95,9 @@ export interface ApiKeyFormData {
   allow_ips: string
   group: string
   cross_group_retry: boolean
+  rate_limit_rpm: number
+  rate_limit_tpm: number
+  model_quota_limits: string
 }
 
 // ============================================================================
