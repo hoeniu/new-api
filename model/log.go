@@ -208,9 +208,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if params.TokenId > 0 && params.ModelName != "" {
 		pt, ct := params.PromptTokens, params.CompletionTokens
 		tid, modelName := params.TokenId, params.ModelName
-		gopool.Go(func() {
-			IncrTokenModelUsageAfterConsume(tid, modelName, pt, ct)
-		})
+		// Synchronous: preflight reads these counts; async caused the next request to pass before DB/TPM memory updated.
+		IncrTokenModelUsageAfterConsume(tid, modelName, pt, ct)
 	}
 	if !common.LogConsumeEnabled {
 		return

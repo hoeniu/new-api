@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,6 +18,22 @@ import (
 )
 
 const tokenRelayWindowMs = 60000
+
+var (
+	tokenRpmMemOnce sync.Once
+	tokenRpmMem     common.InMemoryRateLimiter
+)
+
+func tokenRelayRpmMemoryAllow(tokenId int, limit int) bool {
+	if limit <= 0 {
+		return true
+	}
+	tokenRpmMemOnce.Do(func() {
+		tokenRpmMem.Init(120 * time.Second)
+	})
+	key := "trl:rpm:" + strconv.Itoa(tokenId)
+	return tokenRpmMem.Request(key, limit, 60)
+}
 
 // tokenRpmScript atomically trims the sliding window, enforces max cardinality (RPM), then records this request.
 var tokenRpmScript = redis.NewScript(`
@@ -88,7 +105,8 @@ func EnforceTokenRelayPreflight(c *gin.Context, shouldSelectChannel bool, reques
 	if key == "" {
 		return "", false
 	}
-	tok, err := model.GetTokenByKey(key, false)
+	// Always load from DB so model_quota_limits / rate limits match what was just saved (Redis cache can lag).
+	tok, err := model.GetTokenByKey(key, true)
 	if err != nil || tok == nil {
 		return "", false
 	}
@@ -106,33 +124,46 @@ func EnforceTokenRelayPreflight(c *gin.Context, shouldSelectChannel bool, reques
 		}
 	}
 
-	if common.RedisEnabled && tok.RateLimitTpm > 0 {
-		ctx := context.Background()
-		sum, err := sumTokenTPMWindow(ctx, tokenID)
-		if err != nil {
-			common.SysLog("token tpm window: " + err.Error())
-		} else if int64(tok.RateLimitTpm) <= sum {
+	if tok.RateLimitTpm > 0 {
+		var sum int64
+		var tpmErr error
+		if common.RedisEnabled {
+			ctx := context.Background()
+			sum, tpmErr = sumTokenTPMWindow(ctx, tokenID)
+			if tpmErr != nil {
+				common.SysLog("token tpm window: " + tpmErr.Error())
+			}
+		} else {
+			sum = common.TokenRelayTpmMemorySum(tokenID)
+		}
+		if tpmErr == nil && int64(tok.RateLimitTpm) <= sum {
 			return fmt.Sprintf("Token rate limit: TPM exceeded (limit %d tokens per ~60s rolling window).", tok.RateLimitTpm), true
 		}
 	}
 
-	if common.RedisEnabled && tok.RateLimitRpm > 0 {
-		ctx := context.Background()
-		rpmKey := tokenRelayRPMKey(tokenID)
-		now := time.Now().UnixMilli()
-		member := strconv.FormatInt(now, 10) + ":" + uuid.New().String()
-		v, err := tokenRpmScript.Run(ctx, common.RDB, []string{rpmKey},
-			strconv.FormatInt(now, 10),
-			strconv.Itoa(tokenRelayWindowMs),
-			strconv.Itoa(tok.RateLimitRpm),
-			member,
-		).Int()
-		if err != nil {
-			common.SysLog("token rpm script: " + err.Error())
-			return "", false
-		}
-		if v == 0 {
-			return fmt.Sprintf("Token rate limit: RPM exceeded (limit %d requests per ~60s rolling window).", tok.RateLimitRpm), true
+	if tok.RateLimitRpm > 0 {
+		if common.RedisEnabled {
+			ctx := context.Background()
+			rpmKey := tokenRelayRPMKey(tokenID)
+			now := time.Now().UnixMilli()
+			member := strconv.FormatInt(now, 10) + ":" + uuid.New().String()
+			v, err := tokenRpmScript.Run(ctx, common.RDB, []string{rpmKey},
+				strconv.FormatInt(now, 10),
+				strconv.Itoa(tokenRelayWindowMs),
+				strconv.Itoa(tok.RateLimitRpm),
+				member,
+			).Int()
+			if err != nil {
+				common.SysLog("token rpm script: " + err.Error())
+				return "", false
+			}
+			if v == 0 {
+				return fmt.Sprintf("Token rate limit: RPM exceeded (limit %d requests per ~60s rolling window).", tok.RateLimitRpm), true
+			}
+		} else {
+			if !tokenRelayRpmMemoryAllow(tokenID, tok.RateLimitRpm) {
+				return fmt.Sprintf("Token rate limit: RPM exceeded (limit %d requests per ~60s rolling window).", tok.RateLimitRpm), true
+			}
 		}
 	}
 

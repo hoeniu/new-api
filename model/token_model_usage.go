@@ -101,31 +101,56 @@ func IncrTokenModelUsageAfterConsume(tokenId int, rawModel string, promptTokens,
 		TotalCalls:  1,
 		UpdatedAt:   ts,
 	}
-	err := DB.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "token_id"}, {Name: "model_name"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"total_tokens": gorm.Expr("total_tokens + ?", deltaTok),
-			"total_calls":  gorm.Expr("total_calls + ?", 1),
-			"updated_at":   ts,
-		}),
-	}).Create(&row).Error
+	tbl := TokenModelUsage{}.TableName()
+	var onConflict clause.OnConflict
+	if common.UsingPostgreSQL {
+		// PostgreSQL: unqualified total_* in DO UPDATE is ambiguous vs EXCLUDED; qualify table + EXCLUDED.
+		onConflict = clause.OnConflict{
+			Columns: []clause.Column{{Name: "token_id"}, {Name: "model_name"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"total_tokens": gorm.Expr(tbl+".total_tokens + EXCLUDED.total_tokens"),
+				"total_calls":  gorm.Expr(tbl+".total_calls + EXCLUDED.total_calls"),
+				"updated_at":   ts,
+			}),
+		}
+	} else if common.UsingSQLite {
+		onConflict = clause.OnConflict{
+			Columns: []clause.Column{{Name: "token_id"}, {Name: "model_name"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"total_tokens": gorm.Expr(tbl+".total_tokens + excluded.total_tokens"),
+				"total_calls":  gorm.Expr(tbl+".total_calls + excluded.total_calls"),
+				"updated_at":   ts,
+			}),
+		}
+	} else {
+		onConflict = clause.OnConflict{
+			Columns: []clause.Column{{Name: "token_id"}, {Name: "model_name"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"total_tokens": gorm.Expr("total_tokens + ?", deltaTok),
+				"total_calls":  gorm.Expr("total_calls + ?", 1),
+				"updated_at":   ts,
+			}),
+		}
+	}
+	err := DB.Clauses(onConflict).Create(&row).Error
 	if err != nil {
 		common.SysLog("IncrTokenModelUsageAfterConsume: " + err.Error())
 	}
 
-	if !common.RedisEnabled {
-		return
-	}
 	var tpmLimit int
 	_ = DB.Model(&Token{}).Select("rate_limit_tpm").Where("id = ?", tokenId).Scan(&tpmLimit).Error
 	if tpmLimit <= 0 {
 		return
 	}
-	ctx := context.Background()
-	key := "newapi:trl:tpm:" + strconv.Itoa(tokenId)
-	now := time.Now().UnixMilli()
-	member := strconv.FormatInt(deltaTok, 10) + ":" + uuid.New().String()
-	_ = common.RDB.ZAdd(ctx, key, &redis.Z{Score: float64(now), Member: member}).Err()
-	_ = common.RDB.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(now-60000, 10)).Err()
-	_ = common.RDB.Expire(ctx, key, 180*time.Second).Err()
+	if common.RedisEnabled {
+		ctx := context.Background()
+		key := "newapi:trl:tpm:" + strconv.Itoa(tokenId)
+		now := time.Now().UnixMilli()
+		member := strconv.FormatInt(deltaTok, 10) + ":" + uuid.New().String()
+		_ = common.RDB.ZAdd(ctx, key, &redis.Z{Score: float64(now), Member: member}).Err()
+		_ = common.RDB.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(now-60000, 10)).Err()
+		_ = common.RDB.Expire(ctx, key, 180*time.Second).Err()
+	} else {
+		common.TokenRelayTpmMemoryAdd(tokenId, deltaTok)
+	}
 }
