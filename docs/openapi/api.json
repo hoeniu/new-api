@@ -5066,32 +5066,89 @@
           }
         }
       },
+      "TokenModelQuotaLimitEntry": {
+        "type": "object",
+        "description": "model_quota_limits 解析后的数组元素（提交时为 JSON 字符串）",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "模型名，与 relay 请求中的 model 经归一化后匹配"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "该 Key 对该模型累计最大 Token（含输入与输出），0 表示不限制该项"
+          },
+          "max_calls": {
+            "type": "integer",
+            "description": "该 Key 对该模型累计成功调用次数上限，0 表示不限制该项"
+          }
+        }
+      },
       "Token": {
         "type": "object",
+        "description": "令牌资源。POST /api/token/ 创建、PUT /api/token/ 更新（更新需带 id）。RPM/TPM 为单 Key 约 60 秒滑动窗口；生产环境多实例请配置 Redis 以保证全局限流一致。",
         "properties": {
           "id": {
-            "type": "integer"
+            "type": "integer",
+            "description": "令牌 ID；更新时必填"
           },
           "user_id": {
             "type": "integer"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "令牌显示名称"
           },
           "key": {
-            "type": "string"
+            "type": "string",
+            "description": "完整 Key；列表接口通常脱敏，仅创建/复制等场景返回"
           },
           "status": {
             "type": "integer"
           },
           "expired_time": {
-            "type": "integer"
+            "type": "integer",
+            "description": "过期时间 Unix 秒；-1 表示永不过期"
           },
           "remain_quota": {
-            "type": "integer"
+            "type": "integer",
+            "description": "剩余额度（内部额度单位）"
           },
           "unlimited_quota": {
             "type": "boolean"
+          },
+          "model_limits_enabled": {
+            "type": "boolean",
+            "description": "是否启用模型白名单；可与 model_limits 联动"
+          },
+          "model_limits": {
+            "type": "string",
+            "description": "允许的模型名列表，逗号分隔；空表示不限制（由 model_limits_enabled 控制语义）"
+          },
+          "allow_ips": {
+            "type": "string",
+            "description": "IP 白名单，换行或逗号分隔，支持 CIDR；空不限制"
+          },
+          "group": {
+            "type": "string",
+            "description": "令牌分组；可为用户可选分组或 auto 等"
+          },
+          "cross_group_retry": {
+            "type": "boolean",
+            "description": "分组为 auto 时，是否在渠道失败时跨分组重试"
+          },
+          "rate_limit_rpm": {
+            "type": "integer",
+            "description": "单 Key 每分钟最大请求数（RPM），0 不限制；建议配合 Redis"
+          },
+          "rate_limit_tpm": {
+            "type": "integer",
+            "description": "单 Key 每分钟最大 Token 数（TPM），0 不限制；建议配合 Redis"
+          },
+          "model_quota_limits": {
+            "type": "string",
+            "description": "JSON 数组字符串。示例：[{\"model\":\"qwen-plus\",\"max_tokens\":1000000,\"max_calls\":1000}]。元素结构见 TokenModelQuotaLimitEntry。"
           }
         }
       },
