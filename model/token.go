@@ -439,6 +439,17 @@ func CountUserTokens(userId int) (int64, error) {
 	return total, err
 }
 
+// TokenNameBelongsToUser 判断令牌 name（与日志 token_name 一致）是否属于该用户且未删除。
+func TokenNameBelongsToUser(userId int, tokenName string) (bool, error) {
+	tokenName = strings.TrimSpace(tokenName)
+	if tokenName == "" {
+		return false, errors.New("token_name 为空")
+	}
+	var n int64
+	err := DB.Model(&Token{}).Where("user_id = ? AND name = ?", userId, tokenName).Count(&n).Error
+	return n > 0, err
+}
+
 // BatchDeleteTokens 删除指定用户的一组令牌，返回成功删除数量
 func BatchDeleteTokens(ids []int, userId int) (int, error) {
 	if len(ids) == 0 {

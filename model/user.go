@@ -306,6 +306,20 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+// GetUserIdByUsername 按登录名解析用户 ID（用于用量聚合等按租户查询）。
+func GetUserIdByUsername(username string) (int, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return 0, errors.New("username 为空")
+	}
+	var u User
+	err := DB.Select("id").Where("username = ?", username).First(&u).Error
+	if err != nil {
+		return 0, err
+	}
+	return u.Id, nil
+}
+
 func GetUserIdByAffCode(affCode string) (int, error) {
 	if affCode == "" {
 		return 0, errors.New("affCode 为空！")

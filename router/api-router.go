@@ -272,13 +272,24 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
 		}
 
+		// 用量接口为只读 GET，且已 TokenAuth/UserAuth；不再挂 CriticalRateLimit，
+		// 避免与其它共用 "CT"+IP 桶的敏感接口争用导致正常查询与联调脚本轮询 429。
 		usageRoute := apiRouter.Group("/usage")
-		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		usageRoute.Use(middleware.CORS())
 		{
 			tokenUsageRoute := usageRoute.Group("/token")
 			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
 			{
 				tokenUsageRoute.GET("/", controller.GetTokenUsage)
+			}
+			usageAgg := usageRoute.Group("")
+			usageAgg.Use(middleware.UserAuth())
+			{
+				usageAgg.GET("/by_key", controller.GetUsageByKey)
+				usageAgg.GET("/overview", controller.GetUsageOverview)
+				usageAgg.GET("/trend/daily", controller.GetUsageDailyTrend)
+				usageAgg.GET("/by_model", controller.GetUsageByModel)
+				usageAgg.GET("/keys/ranking", controller.GetUsageKeysRanking)
 			}
 		}
 
