@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -205,11 +207,17 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
-	if params.TokenId > 0 && params.ModelName != "" {
+	// Token model quota preflight keys off the request model (context original_model, set in Distribute).
+	// Log display may rewrite model (e.g. gizmo-*); usage counters must stay aligned with preflight.
+	usageModel := strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+	if usageModel == "" {
+		usageModel = strings.TrimSpace(params.ModelName)
+	}
+	if params.TokenId > 0 && usageModel != "" {
 		pt, ct := params.PromptTokens, params.CompletionTokens
-		tid, modelName := params.TokenId, params.ModelName
+		tid := params.TokenId
 		// Synchronous: preflight reads these counts; async caused the next request to pass before DB/TPM memory updated.
-		IncrTokenModelUsageAfterConsume(tid, modelName, pt, ct)
+		IncrTokenModelUsageAfterConsume(tid, usageModel, pt, ct)
 	}
 	if !common.LogConsumeEnabled {
 		return

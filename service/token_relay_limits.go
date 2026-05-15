@@ -97,10 +97,6 @@ func EnforceTokenRelayPreflight(c *gin.Context, shouldSelectChannel bool, reques
 	if requestModel == "" {
 		return "", false
 	}
-	tokenID := c.GetInt("token_id")
-	if tokenID <= 0 {
-		return "", false
-	}
 	key := strings.TrimSpace(c.GetString("token_key"))
 	if key == "" {
 		return "", false
@@ -109,6 +105,15 @@ func EnforceTokenRelayPreflight(c *gin.Context, shouldSelectChannel bool, reques
 	tok, err := model.GetTokenByKey(key, true)
 	if err != nil || tok == nil {
 		return "", false
+	}
+	// Use the row id from the key lookup (same source as limits), not only gin context, so usage/RPM/TPM
+	// cannot diverge from the authenticated key if context were ever stale or inconsistent.
+	tokenID := tok.Id
+	if tokenID <= 0 {
+		return "", false
+	}
+	if ctxID := c.GetInt("token_id"); ctxID > 0 && ctxID != tokenID {
+		common.SysLog(fmt.Sprintf("EnforceTokenRelayPreflight: context token_id=%d differs from key row id=%d", ctxID, tokenID))
 	}
 	norm := ratio_setting.FormatMatchingModelName(requestModel)
 
