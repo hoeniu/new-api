@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -104,6 +105,49 @@ func RedisDelKey(key string) error {
 	return RDB.Del(ctx, key).Err()
 }
 
+func isRedisWrongTypeErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "WRONGTYPE") || strings.Contains(msg, "EXECABORT")
+}
+
+// ensureRedisHashKey deletes keys that are not hash type (e.g. legacy string values on user:{id}).
+func ensureRedisHashKey(ctx context.Context, key string) error {
+	keyType, err := RDB.Type(ctx, key).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("failed to get key type for %s: %w", key, err)
+	}
+	if keyType != "" && keyType != "none" && keyType != "hash" {
+		SysLog(fmt.Sprintf("Redis: deleting key %s with wrong type %s before hash write", key, keyType))
+		if delErr := RDB.Del(ctx, key).Err(); delErr != nil {
+			return fmt.Errorf("failed to delete key %s with wrong type %s: %w", key, keyType, delErr)
+		}
+	}
+	return nil
+}
+
+func redisHSetMap(ctx context.Context, key string, data map[string]interface{}) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ensureRedisHashKey(ctx, key); err != nil {
+			return err
+		}
+		err := RDB.HSet(ctx, key, data).Err()
+		if err == nil {
+			return nil
+		}
+		if isRedisWrongTypeErr(err) && attempt == 0 {
+			if delErr := RDB.Del(ctx, key).Err(); delErr != nil {
+				return fmt.Errorf("failed to delete key %s after wrong type hset: %w", key, delErr)
+			}
+			continue
+		}
+		return fmt.Errorf("failed to hset key %s: %w", key, err)
+	}
+	return nil
+}
+
 func RedisHSetObj(key string, obj interface{}, expiration time.Duration) error {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis HSET: key=%s, obj=%+v, expiration=%v", key, obj, expiration))
@@ -143,17 +187,15 @@ func RedisHSetObj(key string, obj interface{}, expiration time.Duration) error {
 		data[field.Name] = fmt.Sprintf("%v", value.Interface())
 	}
 
-	txn := RDB.TxPipeline()
-	txn.HSet(ctx, key, data)
+	if err := redisHSetMap(ctx, key, data); err != nil {
+		return err
+	}
 
 	// 只有在 expiration 大于 0 时才设置过期时间
 	if expiration > 0 {
-		txn.Expire(ctx, key, expiration)
-	}
-
-	_, err := txn.Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to execute transaction: %w", err)
+		if err := RDB.Expire(ctx, key, expiration).Err(); err != nil {
+			return fmt.Errorf("failed to set expiration on key %s: %w", key, err)
+		}
 	}
 	return nil
 }
@@ -166,6 +208,10 @@ func RedisHGetObj(key string, obj interface{}) error {
 
 	result, err := RDB.HGetAll(ctx, key).Result()
 	if err != nil {
+		if isRedisWrongTypeErr(err) {
+			_ = RDB.Del(ctx, key).Err()
+			return fmt.Errorf("key %s not found in Redis", key)
+		}
 		return fmt.Errorf("failed to load hash from Redis: %w", err)
 	}
 
@@ -282,18 +328,45 @@ func RedisHIncrBy(key, field string, delta int64) error {
 		return fmt.Errorf("failed to get TTL: %w", err)
 	}
 
-	if ttl > 0 {
-		ctx := context.Background()
-		txn := RDB.TxPipeline()
+	ctx := context.Background()
 
-		incrCmd := txn.HIncrBy(ctx, key, field, delta)
-		if err := incrCmd.Err(); err != nil {
+	if ttl > 0 {
+		for attempt := 0; attempt < 2; attempt++ {
+			if err := ensureRedisHashKey(ctx, key); err != nil {
+				return err
+			}
+			txn := RDB.TxPipeline()
+			incrCmd := txn.HIncrBy(ctx, key, field, delta)
+			txn.Expire(ctx, key, ttl)
+			_, err = txn.Exec(ctx)
+			if err == nil {
+				return nil
+			}
+			if incrErr := incrCmd.Err(); isRedisWrongTypeErr(incrErr) && attempt == 0 {
+				if delErr := RDB.Del(ctx, key).Err(); delErr != nil {
+					return delErr
+				}
+				continue
+			}
 			return err
 		}
+		return nil
+	}
 
-		txn.Expire(ctx, key, ttl)
-
-		_, err = txn.Exec(ctx)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ensureRedisHashKey(ctx, key); err != nil {
+			return err
+		}
+		err = RDB.HIncrBy(ctx, key, field, delta).Err()
+		if err == nil {
+			return nil
+		}
+		if isRedisWrongTypeErr(err) && attempt == 0 {
+			if delErr := RDB.Del(ctx, key).Err(); delErr != nil {
+				return delErr
+			}
+			continue
+		}
 		return err
 	}
 	return nil
@@ -303,25 +376,35 @@ func RedisHSetField(key, field string, value interface{}) error {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis HSET field: key=%s, field=%s, value=%v", key, field, value))
 	}
-	ttlCmd := RDB.TTL(context.Background(), key)
-	ttl, err := ttlCmd.Result()
+	ctx := context.Background()
+	ttl, err := RDB.TTL(ctx, key).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("failed to get TTL: %w", err)
 	}
 
-	if ttl > 0 {
-		ctx := context.Background()
-		txn := RDB.TxPipeline()
-
-		hsetCmd := txn.HSet(ctx, key, field, value)
-		if err := hsetCmd.Err(); err != nil {
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ensureRedisHashKey(ctx, key); err != nil {
 			return err
 		}
+		err = RDB.HSet(ctx, key, field, value).Err()
+		if err == nil {
+			break
+		}
+		if isRedisWrongTypeErr(err) && attempt == 0 {
+			if delErr := RDB.Del(ctx, key).Err(); delErr != nil {
+				return delErr
+			}
+			continue
+		}
+		return fmt.Errorf("failed to hset field on key %s: %w", key, err)
+	}
 
-		txn.Expire(ctx, key, ttl)
-
-		_, err = txn.Exec(ctx)
-		return err
+	expiration := time.Duration(RedisKeyCacheSeconds()) * time.Second
+	if ttl > 0 {
+		expiration = ttl
+	}
+	if expiration > 0 {
+		return RDB.Expire(ctx, key, expiration).Err()
 	}
 	return nil
 }
