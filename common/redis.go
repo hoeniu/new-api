@@ -129,11 +129,19 @@ func ensureRedisHashKey(ctx context.Context, key string) error {
 }
 
 func redisHSetMap(ctx context.Context, key string, data map[string]interface{}) error {
+	if len(data) == 0 {
+		return nil
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := ensureRedisHashKey(ctx, key); err != nil {
 			return err
 		}
-		err := RDB.HSet(ctx, key, data).Err()
+		// 逐字段 HSET，兼容旧版 Redis / 部分代理（不支持单条 HSET 多 field-value）
+		pipe := RDB.Pipeline()
+		for field, value := range data {
+			pipe.HSet(ctx, key, field, value)
+		}
+		_, err := pipe.Exec(ctx)
 		if err == nil {
 			return nil
 		}
