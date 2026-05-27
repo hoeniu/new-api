@@ -286,6 +286,13 @@ func InitResources() error {
 
 	model.CheckSetup()
 
+	if !constant.Setup {
+		if err := model.AutoSetupFromEnv(); err != nil {
+			common.FatalLog("failed to auto-initialize system: " + err.Error())
+			return err
+		}
+	}
+
 	// Initialize options, should after model.InitDB()
 	model.InitOptionMap()
 

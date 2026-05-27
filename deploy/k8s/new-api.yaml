@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: new-api
+  namespace: new-api
+  labels:
+    app: new-api
+spec:
+  type: NodePort
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30080
+  selector:
+    app: new-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: new-api
+  namespace: new-api
+  labels:
+    app: new-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: new-api
+  template:
+    metadata:
+      labels:
+        app: new-api
+    spec:
+      containers:
+        - name: new-api
+          image: __NEW_API_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args:
+            - --log-dir
+            - /app/logs
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: new-api-config
+            - secretRef:
+                name: new-api-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /app/logs
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: data
+          hostPath:
+            path: __DATA_HOST_PATH__
+            type: DirectoryOrCreate
+        - name: logs
+          emptyDir: {}

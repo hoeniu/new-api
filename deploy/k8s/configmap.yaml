@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: new-api-config
+  namespace: new-api
+data:
+  TZ: "Asia/Shanghai"
+  GIN_MODE: "release"
+  PORT: "3000"
+  ERROR_LOG_ENABLED: "true"
+  BATCH_UPDATE_ENABLED: "true"
+  NODE_NAME: "new-api-k8s-node-1"
+  INIT_USAGE_MODE: "external"
+  CRITICAL_RATE_LIMIT_ENABLE: "false"
+  GLOBAL_API_RATE_LIMIT_ENABLE: "false"
+  GLOBAL_WEB_RATE_LIMIT_ENABLE: "false"
+  SEARCH_RATE_LIMIT_ENABLE: "false"
+  MODEL_REQUEST_RATE_LIMIT_ENABLE: "false"
