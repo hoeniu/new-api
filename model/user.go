@@ -521,6 +521,9 @@ func (user *User) Update(updatePassword bool) error {
 	if err = DB.Model(user).Updates(newUser).Error; err != nil {
 		return err
 	}
+	if err = DB.First(user, user.Id).Error; err != nil {
+		return err
+	}
 
 	// Update cache
 	return updateUserCache(*user)
