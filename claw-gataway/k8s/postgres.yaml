@@ -32,7 +32,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:15
+          image: __POSTGRES_IMAGE__
           ports:
             - containerPort: 5432
           env:

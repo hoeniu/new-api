@@ -14,8 +14,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Kubernetes 命名空间
 NAMESPACE="new-api"
 
-# New API 镜像（与 docker-compose 默认一致，可按需替换）
-NEW_API_IMAGE="registry.cn-qingdao.aliyuncs.com/niuhong/hoeniu:new-api-v1"
+# New API 镜像
+NEW_API_IMAGE="registry-public.lenovo.com/newapi/new-api:new-api-v1"
+
+# PostgreSQL / Redis 镜像
+POSTGRES_IMAGE="registry-public.lenovo.com/newapi/postgres:15"
+REDIS_IMAGE="registry-public.lenovo.com/newapi/redis:latest"
 
 # 管理员账号（首次部署自动初始化，跳过 Web 向导）
 INIT_ADMIN_USERNAME="admin"
@@ -100,6 +104,14 @@ apply_manifest() {
   kubectl apply -f "$file"
 }
 
+render_postgres_manifest() {
+  sed "s|__POSTGRES_IMAGE__|${POSTGRES_IMAGE}|g" "${SCRIPT_DIR}/postgres.yaml"
+}
+
+render_redis_manifest() {
+  sed "s|__REDIS_IMAGE__|${REDIS_IMAGE}|g" "${SCRIPT_DIR}/redis.yaml"
+}
+
 render_new_api_manifest() {
   sed "s|__NEW_API_IMAGE__|${NEW_API_IMAGE}|g" \
     "${SCRIPT_DIR}/new-api.yaml" \
@@ -133,8 +145,10 @@ main() {
     --dry-run=client -o yaml | kubectl apply -f -
 
   apply_manifest "${SCRIPT_DIR}/configmap.yaml"
-  apply_manifest "${SCRIPT_DIR}/postgres.yaml"
-  apply_manifest "${SCRIPT_DIR}/redis.yaml"
+  info "部署 PostgreSQL..."
+  render_postgres_manifest | kubectl apply -f -
+  info "部署 Redis..."
+  render_redis_manifest | kubectl apply -f -
 
   info "部署 New API..."
   render_new_api_manifest | kubectl apply -f -
