@@ -70,12 +70,8 @@ spec:
                 - pg_isready -U "$POSTGRES_USER"
             initialDelaySeconds: 30
             periodSeconds: 10
-  volumeClaimTemplates:
-    - metadata:
-        name: pg-data
-      spec:
-        accessModes:
-          - ReadWriteOnce
-        resources:
-          requests:
-            storage: 5Gi
+      volumes:
+        - name: pg-data
+          hostPath:
+            path: __PG_DATA_HOST_PATH__
+            type: DirectoryOrCreate

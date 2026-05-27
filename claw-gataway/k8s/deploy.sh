@@ -46,8 +46,9 @@ REDIS_PASSWORD="123456"
 # NodePort 对外端口（30000-32767）
 NODE_PORT="30080"
 
-# 本地数据目录（hostPath 挂载到节点本机，与 docker-compose ./data 一致）
+# 本地数据目录（hostPath 挂载到节点本机）
 DATA_HOST_PATH="/data"
+PG_DATA_HOST_PATH="/data/pgdata"
 
 SQL_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
 REDIS_CONN_STRING="redis://:${REDIS_PASSWORD}@redis:6379"
@@ -105,7 +106,8 @@ apply_manifest() {
 }
 
 render_postgres_manifest() {
-  sed "s|__POSTGRES_IMAGE__|${POSTGRES_IMAGE}|g" "${SCRIPT_DIR}/postgres.yaml"
+  sed "s|__POSTGRES_IMAGE__|${POSTGRES_IMAGE}|g" "${SCRIPT_DIR}/postgres.yaml" \
+    | sed "s|__PG_DATA_HOST_PATH__|${PG_DATA_HOST_PATH}|g"
 }
 
 render_redis_manifest() {
@@ -123,8 +125,9 @@ main() {
   require_cmd kubectl
   validate_config
 
-  mkdir -p "${DATA_HOST_PATH}"
-  info "本地数据目录: ${DATA_HOST_PATH}"
+  mkdir -p "${DATA_HOST_PATH}" "${PG_DATA_HOST_PATH}"
+  info "New API 数据目录: ${DATA_HOST_PATH}"
+  info "PostgreSQL 数据目录: ${PG_DATA_HOST_PATH}"
 
   info "创建命名空间 ${NAMESPACE}..."
   kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
@@ -145,20 +148,19 @@ main() {
     --dry-run=client -o yaml | kubectl apply -f -
 
   apply_manifest "${SCRIPT_DIR}/configmap.yaml"
-  info "部署 PostgreSQL..."
+
+  info "[1/3] 部署 PostgreSQL..."
   render_postgres_manifest | kubectl apply -f -
-  info "部署 Redis..."
-  render_redis_manifest | kubectl apply -f -
-
-  info "部署 New API..."
-  render_new_api_manifest | kubectl apply -f -
-
   info "等待 PostgreSQL 就绪..."
   kubectl -n "${NAMESPACE}" rollout status statefulset/postgres --timeout=300s
 
+  info "[2/3] 部署 Redis..."
+  render_redis_manifest | kubectl apply -f -
   info "等待 Redis 就绪..."
   kubectl -n "${NAMESPACE}" rollout status deployment/redis --timeout=180s
 
+  info "[3/3] 部署 New API..."
+  render_new_api_manifest | kubectl apply -f -
   info "等待 New API 就绪..."
   kubectl -n "${NAMESPACE}" rollout status deployment/new-api --timeout=300s
 
