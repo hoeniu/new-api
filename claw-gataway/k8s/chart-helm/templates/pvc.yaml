@@ -1,0 +1,17 @@
+{{- $storageType := "local" -}}
+{{- if and .Values.extraInit .Values.extraInit.storage .Values.extraInit.storage.type -}}
+{{- $storageType = .Values.extraInit.storage.type -}}
+{{- end -}}
+{{- if and .Values.extraInit (eq $storageType "pvc") }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "{{ .Release.Name }}-storage-claim"
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.extraInit.pvcStorage }}
+{{- end }}

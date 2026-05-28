@@ -1,0 +1,85 @@
+suite: test local storage
+templates:
+  - deployment.yaml
+  - pvc.yaml
+  - job.yaml
+tests:
+  - it: should use hostPath and skip pvc when storage type is local
+    set:
+      extraInit:
+        storage:
+          type: local
+          hostPath: "/data/models/qwen2.5-7b"
+        modelDownload:
+          enabled: false
+          image:
+            repository: "amazon/aws-cli"
+            tag: "2.6.4"
+            pullPolicy: "IfNotPresent"
+          waitContainer:
+            command: ["/bin/bash"]
+            args: ["-c", "wait"]
+          downloadJob:
+            command: ["/bin/bash"]
+            args: ["-c", "download"]
+        initContainers: []
+        pvcStorage: "1Gi"
+    asserts:
+      - template: deployment.yaml
+        hasDocuments:
+          count: 1
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.volumes[0].hostPath.path
+          value: /data/models/qwen2.5-7b
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.volumes[0].hostPath.type
+          value: DirectoryOrCreate
+      - template: deployment.yaml
+        isNull:
+          path: spec.template.spec.initContainers
+      - template: pvc.yaml
+        hasDocuments:
+          count: 0
+      - template: job.yaml
+        hasDocuments:
+          count: 0
+
+  - it: should create job and pvc when S3 download is enabled with pvc storage
+    set:
+      extraInit:
+        storage:
+          type: pvc
+          hostPath: "/data/models/qwen2.5-7b"
+        modelDownload:
+          enabled: true
+          image:
+            repository: "amazon/aws-cli"
+            tag: "2.6.4"
+            pullPolicy: "IfNotPresent"
+          waitContainer:
+            command: ["/bin/bash"]
+            args:
+              - "-eucx"
+              - "while aws --endpoint-url $S3_ENDPOINT_URL s3 sync --dryrun s3://$S3_BUCKET_NAME/$S3_PATH /data | grep -q download; do sleep 10; done"
+          downloadJob:
+            command: ["/bin/bash"]
+            args:
+              - "-eucx"
+              - "aws --endpoint-url $S3_ENDPOINT_URL s3 sync s3://$S3_BUCKET_NAME/$S3_PATH /data"
+        initContainers: []
+        pvcStorage: "10Gi"
+        s3modelpath: "relative_s3_model_path/qwen2.5-7b"
+        awsEc2MetadataDisabled: true
+    asserts:
+      - template: pvc.yaml
+        hasDocuments:
+          count: 1
+      - template: job.yaml
+        hasDocuments:
+          count: 1
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
+          value: RELEASE-NAME-storage-claim

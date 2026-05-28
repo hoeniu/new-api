@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="new-api"
 DATA_HOST_PATH="/data"
 PG_DATA_HOST_PATH="/data/pgdata"
+VLLM_RELEASE_NAME="vllm"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -49,6 +50,13 @@ delete_k8s_resources() {
   if ! kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1; then
     warn "命名空间 ${NAMESPACE} 不存在，跳过 K8s 清理"
     return
+  fi
+
+  if command -v helm >/dev/null 2>&1; then
+    if helm -n "${NAMESPACE}" status "${VLLM_RELEASE_NAME}" >/dev/null 2>&1; then
+      info "卸载 vLLM Helm Release (${VLLM_RELEASE_NAME})..."
+      helm -n "${NAMESPACE}" uninstall "${VLLM_RELEASE_NAME}" --wait --timeout=300s
+    fi
   fi
 
   info "[1/3] 删除 New API..."

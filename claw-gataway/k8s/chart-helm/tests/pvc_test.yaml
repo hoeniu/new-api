@@ -1,0 +1,35 @@
+suite: test pvc
+templates:
+  - pvc.yaml
+tests:
+  # Test Case: PVC Created When extraInit Defined
+  - it: should create pvc when storage type is pvc
+    set:
+      extraInit:
+        storage:
+          type: pvc
+          hostPath: "/data/models/qwen2.5-7b"
+        modelDownload:
+          enabled: true
+          image:
+            repository: "amazon/aws-cli"
+            tag: "2.6.4"
+            pullPolicy: "IfNotPresent"
+          waitContainer:
+            command: ["/bin/bash"]
+            args: ["-c", "wait"]
+          downloadJob:
+            command: ["/bin/bash"]
+            args: ["-c", "download"]
+        pvcStorage: "10Gi"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PersistentVolumeClaim
+      - equal:
+          path: spec.accessModes[0]
+          value: ReadWriteOnce
+      - equal:
+          path: spec.resources.requests.storage
+          value: 10Gi

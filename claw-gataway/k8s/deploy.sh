@@ -50,6 +50,12 @@ NODE_PORT="30080"
 DATA_HOST_PATH="/data"
 PG_DATA_HOST_PATH="/data/pgdata"
 
+# vLLM 模型服务（Helm chart-helm，本地 hostPath 挂载）
+DEPLOY_VLLM="true"
+VLLM_RELEASE_NAME="vllm"
+VLLM_MODEL_NAME="qwen2.5-7b"
+VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
+
 SQL_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
 REDIS_CONN_STRING="redis://:${REDIS_PASSWORD}@redis:6379"
 
@@ -121,6 +127,22 @@ render_new_api_manifest() {
     | sed "s|__DATA_HOST_PATH__|${DATA_HOST_PATH}|g"
 }
 
+deploy_vllm() {
+  require_cmd helm
+
+  info "[4/4] 部署 vLLM 模型 (${VLLM_MODEL_NAME})..."
+  mkdir -p "${VLLM_MODEL_HOST_PATH}"
+  info "vLLM 模型目录: ${VLLM_MODEL_HOST_PATH}"
+
+  helm upgrade --install "${VLLM_RELEASE_NAME}" "${SCRIPT_DIR}/chart-helm" \
+    -n "${NAMESPACE}" \
+    --set "extraInit.storage.hostPath=${VLLM_MODEL_HOST_PATH}" \
+    --set "image.command={vllm,serve,/data/,--served-model-name,${VLLM_MODEL_NAME},--enforce-eager,--dtype,bfloat16,--block-size,16,--host,0.0.0.0,--port,8000}"
+
+  info "等待 vLLM 就绪（模型加载可能较久）..."
+  kubectl -n "${NAMESPACE}" rollout status "deployment/${VLLM_RELEASE_NAME}-deployment-vllm" --timeout=1200s
+}
+
 main() {
   require_cmd kubectl
   validate_config
@@ -128,6 +150,9 @@ main() {
   mkdir -p "${DATA_HOST_PATH}" "${PG_DATA_HOST_PATH}"
   info "New API 数据目录: ${DATA_HOST_PATH}"
   info "PostgreSQL 数据目录: ${PG_DATA_HOST_PATH}"
+  if [[ "${DEPLOY_VLLM}" == "true" ]]; then
+    info "vLLM 模型目录: ${VLLM_MODEL_HOST_PATH}"
+  fi
 
   info "创建命名空间 ${NAMESPACE}..."
   kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
@@ -149,20 +174,26 @@ main() {
 
   apply_manifest "${SCRIPT_DIR}/configmap.yaml"
 
-  info "[1/3] 部署 PostgreSQL..."
+  info "[1/4] 部署 PostgreSQL..."
   render_postgres_manifest | kubectl apply -f -
   info "等待 PostgreSQL 就绪..."
   kubectl -n "${NAMESPACE}" rollout status statefulset/postgres --timeout=300s
 
-  info "[2/3] 部署 Redis..."
+  info "[2/4] 部署 Redis..."
   render_redis_manifest | kubectl apply -f -
   info "等待 Redis 就绪..."
   kubectl -n "${NAMESPACE}" rollout status deployment/redis --timeout=180s
 
-  info "[3/3] 部署 New API..."
+  info "[3/4] 部署 New API..."
   render_new_api_manifest | kubectl apply -f -
   info "等待 New API 就绪..."
   kubectl -n "${NAMESPACE}" rollout status deployment/new-api --timeout=300s
+
+  if [[ "${DEPLOY_VLLM}" == "true" ]]; then
+    deploy_vllm
+  else
+    info "跳过 vLLM 部署（DEPLOY_VLLM=${DEPLOY_VLLM}）"
+  fi
 
   NODE_IP="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)"
   if [[ -z "${NODE_IP}" ]]; then
@@ -182,6 +213,13 @@ main() {
   echo "         -H \"New-Api-User: 1\" \\"
   echo "         http://${NODE_IP}:${NODE_PORT}/api/user/self"
   echo ""
+  if [[ "${DEPLOY_VLLM}" == "true" ]]; then
+    echo "  vLLM 模型:    ${VLLM_MODEL_NAME}"
+    echo "  vLLM 集群内:  http://${VLLM_RELEASE_NAME}-service.${NAMESPACE}.svc.cluster.local/v1"
+    echo "  模型目录:     ${VLLM_MODEL_HOST_PATH}"
+    echo ""
+    warn "请确保模型文件已放入 ${VLLM_MODEL_HOST_PATH}（含 config.json 等权重文件）"
+  fi
   warn "生产环境请修改脚本顶部的默认密码与 Token！"
 }
 
