@@ -7,7 +7,7 @@ servedModelName: "qwen2.5-7b"
 # -- Image configuration
 image:
   # -- Image repository
-  repository: "vllm/vllm-openai"
+  repository: "swr.cn-east-3.myhuaweicloud.com/kubesre/docker.io/vllm/vllm-openai"
   # -- Image tag
   tag: "latest"
 

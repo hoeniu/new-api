@@ -63,10 +63,13 @@ VLLM_GPU_RUNTIME_CLASS=""
 # vLLM 自动注册到 New API（渠道 + API Token）
 AUTO_REGISTER_VLLM="true"
 VLLM_CHANNEL_NAME="vllm"
-VLLM_CHANNEL_BASE_URL="http://vllm-service.new-api.svc.cluster.local/v1"
+VLLM_CHANNEL_BASE_URL="http://vllm-service.new-api.svc.cluster.local"
 VLLM_CHANNEL_KEY="vllm"
 VLLM_TOKEN_NAME="auto-vllm"
 NEW_API_ROOT_USER_ID="1"
+# 自动设置模型倍率（ModelRatio / CompletionRatio，默认均为 1）
+AUTO_SETUP_MODEL_PRICING="true"
+VLLM_MODEL_RATIO="1"
 
 SQL_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
 REDIS_CONN_STRING="redis://:${REDIS_PASSWORD}@redis:6379"
@@ -212,7 +215,7 @@ register_vllm_in_new_api() {
   require_cmd curl
   require_cmd python3
 
-  info "[${TOTAL_STEPS}/${TOTAL_STEPS}] 自动注册 vLLM 渠道与 API Token..."
+  info "[${TOTAL_STEPS}/${TOTAL_STEPS}] 自动注册 vLLM 渠道、Token 与模型定价..."
   wait_new_api_api
 
   REGISTER_RESULT="$(
@@ -225,6 +228,8 @@ register_vllm_in_new_api() {
     VLLM_CHANNEL_KEY="${VLLM_CHANNEL_KEY}" \
     VLLM_MODEL_NAME="${VLLM_MODEL_NAME}" \
     VLLM_TOKEN_NAME="${VLLM_TOKEN_NAME}" \
+    AUTO_SETUP_MODEL_PRICING="${AUTO_SETUP_MODEL_PRICING}" \
+    VLLM_MODEL_RATIO="${VLLM_MODEL_RATIO}" \
     python3 <<'PY'
 import json
 import os
@@ -266,6 +271,29 @@ def find_by_name(items, name):
     return None
 
 
+def get_option_json(key):
+    resp = api_request("GET", "/api/option/")
+    ensure_success(resp, "get options")
+    for item in resp.get("data") or []:
+        if item.get("key") == key:
+            raw = item.get("value") or "{}"
+            try:
+                return json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+
+def upsert_option_ratio(key, model_name, ratio):
+    payload = get_option_json(key)
+    payload[model_name] = float(ratio)
+    update = api_request("PUT", "/api/option/", {
+        "key": key,
+        "value": json.dumps(payload, ensure_ascii=False),
+    })
+    ensure_success(update, f"update option {key}")
+
+
 channel_name = os.environ["VLLM_CHANNEL_NAME"]
 channel_search = api_request("GET", f"/api/channel/search?keyword={channel_name}&page_size=50")
 ensure_success(channel_search, "search channel")
@@ -273,7 +301,15 @@ channel_items = (channel_search.get("data") or {}).get("items") or []
 existing_channel = find_by_name(channel_items, channel_name)
 
 if existing_channel:
-    channel_action = "exists"
+    expected_base_url = os.environ["VLLM_CHANNEL_BASE_URL"]
+    if existing_channel.get("base_url") != expected_base_url:
+        existing_channel["base_url"] = expected_base_url
+        existing_channel["models"] = os.environ["VLLM_MODEL_NAME"]
+        update_channel = api_request("PUT", "/api/channel/", existing_channel)
+        ensure_success(update_channel, "update channel")
+        channel_action = "updated"
+    else:
+        channel_action = "exists"
 else:
     create_channel = api_request("POST", "/api/channel/", {
         "mode": "single",
@@ -324,9 +360,19 @@ api_key = (key_resp.get("data") or {}).get("key", "")
 if not api_key:
     raise RuntimeError("token key is empty")
 
+pricing_action = "skipped"
+model_ratio = os.environ.get("VLLM_MODEL_RATIO", "1")
+if os.environ.get("AUTO_SETUP_MODEL_PRICING", "true").lower() == "true":
+    model_name = os.environ["VLLM_MODEL_NAME"]
+    upsert_option_ratio("ModelRatio", model_name, model_ratio)
+    upsert_option_ratio("CompletionRatio", model_name, model_ratio)
+    pricing_action = "configured"
+
 print(json.dumps({
     "channel_action": channel_action,
     "token_action": token_action,
+    "pricing_action": pricing_action,
+    "model_ratio": model_ratio,
     "api_key": api_key,
 }, ensure_ascii=False))
 PY
@@ -335,9 +381,13 @@ PY
   GENERATED_API_TOKEN="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['api_key'])")"
   CHANNEL_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['channel_action'])")"
   TOKEN_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['token_action'])")"
+  PRICING_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pricing_action','skipped'))")"
 
   info "渠道「${VLLM_CHANNEL_NAME}」: ${CHANNEL_ACTION}"
   info "令牌「${VLLM_TOKEN_NAME}」: ${TOKEN_ACTION}"
+  if [[ "${PRICING_ACTION}" == "configured" ]]; then
+    info "模型定价: ${VLLM_MODEL_NAME} ModelRatio=${VLLM_MODEL_RATIO} CompletionRatio=${VLLM_MODEL_RATIO}"
+  fi
 }
 
 main() {
@@ -420,12 +470,24 @@ main() {
     echo "  模型目录:     ${VLLM_MODEL_HOST_PATH}"
     if [[ "${AUTO_REGISTER_VLLM}" == "true" && -n "${GENERATED_API_TOKEN:-}" ]]; then
       echo "  API Token:    sk-${GENERATED_API_TOKEN}"
+      if [[ "${AUTO_SETUP_MODEL_PRICING}" == "true" ]]; then
+        echo "  模型倍率:     ${VLLM_MODEL_NAME} = ${VLLM_MODEL_RATIO}"
+      fi
       echo ""
       echo "  模型调用示例:"
       echo "    curl -H \"Authorization: Bearer sk-${GENERATED_API_TOKEN}\" \\"
       echo "         -H \"Content-Type: application/json\" \\"
       echo "         -d '{\"model\":\"${VLLM_MODEL_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}' \\"
       echo "         http://${NODE_IP}:${NODE_PORT}/v1/chat/completions"
+      if [[ "${AUTO_SETUP_MODEL_PRICING}" == "true" ]]; then
+        echo ""
+        echo "  手动设置模型倍率示例 (Root):"
+        echo "    curl -X PUT -H \"Authorization: ${INIT_WEB_ACCESS_TOKEN}\" \\"
+        echo "         -H \"New-Api-User: ${NEW_API_ROOT_USER_ID}\" \\"
+        echo "         -H \"Content-Type: application/json\" \\"
+        echo "         -d '{\"key\":\"ModelRatio\",\"value\":\"{\\\"${VLLM_MODEL_NAME}\\\":${VLLM_MODEL_RATIO}}\"}' \\"
+        echo "         http://${NODE_IP}:${NODE_PORT}/api/option/"
+      fi
     fi
     echo ""
     warn "请确保模型文件已放入 ${VLLM_MODEL_HOST_PATH}（含 config.json 等权重文件）"
