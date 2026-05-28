@@ -2,6 +2,9 @@
     "$schema": "http://json-schema.org/schema#",
     "type": "object",
     "properties": {
+        "servedModelName": {
+            "type": "string"
+        },
         "image": {
             "type": "object",
             "properties": {
@@ -10,16 +13,9 @@
                 },
                 "tag": {
                     "type": "string"
-                },
-                "command": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 }
             },
             "required": [
-                "command",
                 "repository",
                 "tag"
             ]
@@ -338,6 +334,7 @@
         "replicaCount",
         "resources",
         "secrets",
+        "servedModelName",
         "servicePort"
     ]
 }

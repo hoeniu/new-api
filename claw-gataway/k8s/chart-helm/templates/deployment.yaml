@@ -22,12 +22,8 @@ spec:
       containers:
         - name: "vllm"
           image: "{{ required "Required value 'image.repository' must be defined !" .Values.image.repository }}:{{ required "Required value 'image.tag' must be defined !" .Values.image.tag }}"
-          {{- if .Values.image.command }}
-          command :
-            {{- with .Values.image.command }}
-            {{- toYaml . | nindent 10 }}
-            {{- end }}
-          {{- end }}
+          command:
+          {{- include "chart.vllmCommand" . | nindent 12 }}
           securityContext:
             {{- if .Values.image.securityContext }}
               {{- with .Values.image.securityContext }}

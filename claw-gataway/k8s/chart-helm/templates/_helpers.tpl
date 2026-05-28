@@ -125,6 +125,27 @@ runAsUser:
 
 
 {{/*
+Define vLLM container command (all args must be strings for Kubernetes)
+*/}}
+{{- define "chart.vllmCommand" -}}
+- vllm
+- serve
+- /data/
+- --served-model-name
+- {{ required "Value 'servedModelName' must be defined !" .Values.servedModelName | quote }}
+- --enforce-eager
+- --dtype
+- bfloat16
+- --block-size
+- "16"
+- --host
+- "0.0.0.0"
+- --port
+- "8000"
+{{- end }}
+
+
+{{/*
 Define model storage volume (hostPath for local, PVC for remote/S3 workflow)
 */}}
 {{- define "chart.storageVolume" -}}

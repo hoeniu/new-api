@@ -1,14 +1,15 @@
 # -- Default values for chart vllm
 # -- Declare variables to be passed into your templates.
 
+# -- Model name exposed by vLLM (--served-model-name)
+servedModelName: "qwen2.5-7b"
+
 # -- Image configuration
 image:
   # -- Image repository
   repository: "vllm/vllm-openai"
   # -- Image tag
   tag: "latest"
-  # -- Container launch command
-  command: ["vllm", "serve", "/data/", "--served-model-name", "qwen2.5-7b", "--enforce-eager", "--dtype", "bfloat16", "--block-size", "16", "--host", "0.0.0.0", "--port", "8000"]
 
 # -- Container port
 containerPort: 8000

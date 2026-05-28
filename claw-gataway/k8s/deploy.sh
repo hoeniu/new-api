@@ -154,8 +154,8 @@ deploy_vllm() {
 
   helm upgrade --install "${VLLM_RELEASE_NAME}" "${SCRIPT_DIR}/chart-helm" \
     -n "${NAMESPACE}" \
-    --set "extraInit.storage.hostPath=${VLLM_MODEL_HOST_PATH}" \
-    --set "image.command={vllm,serve,/data/,--served-model-name,${VLLM_MODEL_NAME},--enforce-eager,--dtype,bfloat16,--block-size,16,--host,0.0.0.0,--port,8000}"
+    --set "servedModelName=${VLLM_MODEL_NAME}" \
+    --set "extraInit.storage.hostPath=${VLLM_MODEL_HOST_PATH}"
 
   info "等待 vLLM 就绪（模型加载可能较久）..."
   kubectl -n "${NAMESPACE}" rollout status "deployment/${VLLM_RELEASE_NAME}-deployment-vllm" --timeout=1200s
