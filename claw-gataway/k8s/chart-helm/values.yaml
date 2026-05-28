@@ -29,23 +29,20 @@ deploymentStrategy: {}
 # -- Resource configuration
 resources:
   requests:
-    # -- Number of CPUs
     cpu: 4
-    # -- CPU memory configuration
     memory: 16Gi
-    # -- Number of gpus used
-    nvidia.com/gpu: 1
   limits:
-    # -- Number of CPUs
     cpu: 4
-    # -- CPU memory configuration
     memory: 16Gi
-    # -- Number of gpus used
-    nvidia.com/gpu: 1
 
-# -- Type of gpu used
-gpuModels:
-  - "TYPE_GPU_USED"
+# -- GPU scheduling
+gpu:
+  enabled: true
+  count: 1
+  # Leave empty unless your cluster defines a RuntimeClass (e.g. nvidia)
+  runtimeClassName: ""
+  # Leave empty to schedule on any GPU node
+  models: []
 
 # -- Autoscaling configuration
 autoscaling:

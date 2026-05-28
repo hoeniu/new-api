@@ -110,8 +110,11 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if and (gt (int (index .Values.resources.requests "nvidia.com/gpu")) 0) (gt (int (index .Values.resources.limits "nvidia.com/gpu")) 0) }}
-      runtimeClassName: nvidia
+      {{- if .Values.gpu.enabled }}
+      {{- if .Values.gpu.runtimeClassName }}
+      runtimeClassName: {{ .Values.gpu.runtimeClassName | quote }}
+      {{- end }}
+      {{- if .Values.gpu.models }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -119,8 +122,7 @@ spec:
               - matchExpressions:
                 - key: nvidia.com/gpu.product
                   operator: In
-                  {{- with .Values.gpuModels }}
                   values:
-                    {{- toYaml . | nindent 20 }}
-                  {{- end }}
-      {{- end }} 
+                    {{- toYaml .Values.gpu.models | nindent 20 }}
+      {{- end }}
+      {{- end }}

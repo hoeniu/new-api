@@ -55,6 +55,10 @@ DEPLOY_VLLM="true"
 VLLM_RELEASE_NAME="vllm"
 VLLM_MODEL_NAME="qwen2.5-7b"
 VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
+# GPU: auto | true | false
+VLLM_GPU_ENABLED="auto"
+# 仅当集群已创建 RuntimeClass 时填写（kubectl get runtimeclass）
+VLLM_GPU_RUNTIME_CLASS=""
 
 # vLLM 自动注册到 New API（渠道 + API Token）
 AUTO_REGISTER_VLLM="true"
@@ -152,10 +156,41 @@ deploy_vllm() {
   mkdir -p "${VLLM_MODEL_HOST_PATH}"
   info "vLLM 模型目录: ${VLLM_MODEL_HOST_PATH}"
 
-  helm upgrade --install "${VLLM_RELEASE_NAME}" "${SCRIPT_DIR}/chart-helm" \
-    -n "${NAMESPACE}" \
-    --set "servedModelName=${VLLM_MODEL_NAME}" \
+  local gpu_enabled="${VLLM_GPU_ENABLED}"
+  if [[ "${gpu_enabled}" == "auto" ]]; then
+    if kubectl get nodes -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null \
+      | awk '$1+0>0 { found=1 } END { exit !found }'; then
+      gpu_enabled="true"
+      info "检测到 GPU 节点"
+    else
+      gpu_enabled="false"
+      warn "未检测到 GPU，vLLM 将以 CPU 模式部署"
+    fi
+  fi
+
+  local -a helm_args=(
+    upgrade --install "${VLLM_RELEASE_NAME}" "${SCRIPT_DIR}/chart-helm"
+    -n "${NAMESPACE}"
+    --set "servedModelName=${VLLM_MODEL_NAME}"
     --set "extraInit.storage.hostPath=${VLLM_MODEL_HOST_PATH}"
+    --set "gpu.enabled=${gpu_enabled}"
+  )
+
+  if [[ "${gpu_enabled}" == "true" ]]; then
+    helm_args+=(--set "gpu.count=1")
+    if [[ -n "${VLLM_GPU_RUNTIME_CLASS}" ]]; then
+      helm_args+=(--set "gpu.runtimeClassName=${VLLM_GPU_RUNTIME_CLASS}")
+    fi
+  else
+    helm_args+=(
+      --set "resources.requests.cpu=2"
+      --set "resources.limits.cpu=4"
+      --set "resources.requests.memory=8Gi"
+      --set "resources.limits.memory=16Gi"
+    )
+  fi
+
+  helm "${helm_args[@]}"
 
   info "等待 vLLM 就绪（模型加载可能较久）..."
   kubectl -n "${NAMESPACE}" rollout status "deployment/${VLLM_RELEASE_NAME}-deployment-vllm" --timeout=1200s
