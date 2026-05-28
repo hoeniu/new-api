@@ -56,6 +56,14 @@ VLLM_RELEASE_NAME="vllm"
 VLLM_MODEL_NAME="qwen2.5-7b"
 VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
 
+# vLLM 自动注册到 New API（渠道 + API Token）
+AUTO_REGISTER_VLLM="true"
+VLLM_CHANNEL_NAME="vllm"
+VLLM_CHANNEL_BASE_URL="http://vllm-service.new-api.svc.cluster.local/v1"
+VLLM_CHANNEL_KEY="vllm"
+VLLM_TOKEN_NAME="auto-vllm"
+NEW_API_ROOT_USER_ID="1"
+
 SQL_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
 REDIS_CONN_STRING="redis://:${REDIS_PASSWORD}@redis:6379"
 
@@ -105,6 +113,16 @@ validate_config() {
   esac
 }
 
+calc_total_steps() {
+  TOTAL_STEPS=3
+  if [[ "${DEPLOY_VLLM}" == "true" ]]; then
+    TOTAL_STEPS=4
+    if [[ "${AUTO_REGISTER_VLLM}" == "true" ]]; then
+      TOTAL_STEPS=5
+    fi
+  fi
+}
+
 apply_manifest() {
   local file="$1"
   info "Applying ${file}..."
@@ -130,7 +148,7 @@ render_new_api_manifest() {
 deploy_vllm() {
   require_cmd helm
 
-  info "[4/4] 部署 vLLM 模型 (${VLLM_MODEL_NAME})..."
+  info "[4/${TOTAL_STEPS}] 部署 vLLM 模型 (${VLLM_MODEL_NAME})..."
   mkdir -p "${VLLM_MODEL_HOST_PATH}"
   info "vLLM 模型目录: ${VLLM_MODEL_HOST_PATH}"
 
@@ -143,9 +161,154 @@ deploy_vllm() {
   kubectl -n "${NAMESPACE}" rollout status "deployment/${VLLM_RELEASE_NAME}-deployment-vllm" --timeout=1200s
 }
 
+wait_new_api_api() {
+  local attempt
+  for attempt in $(seq 1 30); do
+    if curl -sf "http://${NODE_IP}:${NODE_PORT}/api/status" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  error "New API 接口未就绪: http://${NODE_IP}:${NODE_PORT}/api/status"
+  exit 1
+}
+
+register_vllm_in_new_api() {
+  require_cmd curl
+  require_cmd python3
+
+  info "[${TOTAL_STEPS}/${TOTAL_STEPS}] 自动注册 vLLM 渠道与 API Token..."
+  wait_new_api_api
+
+  REGISTER_RESULT="$(
+    REGISTER_NODE_IP="${NODE_IP}" \
+    NODE_PORT="${NODE_PORT}" \
+    INIT_WEB_ACCESS_TOKEN="${INIT_WEB_ACCESS_TOKEN}" \
+    NEW_API_ROOT_USER_ID="${NEW_API_ROOT_USER_ID}" \
+    VLLM_CHANNEL_NAME="${VLLM_CHANNEL_NAME}" \
+    VLLM_CHANNEL_BASE_URL="${VLLM_CHANNEL_BASE_URL}" \
+    VLLM_CHANNEL_KEY="${VLLM_CHANNEL_KEY}" \
+    VLLM_MODEL_NAME="${VLLM_MODEL_NAME}" \
+    VLLM_TOKEN_NAME="${VLLM_TOKEN_NAME}" \
+    python3 <<'PY'
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+BASE = f"http://{os.environ['REGISTER_NODE_IP']}:{os.environ['NODE_PORT']}"
+AUTH_HEADERS = {
+    "Authorization": os.environ["INIT_WEB_ACCESS_TOKEN"],
+    "New-Api-User": os.environ["NEW_API_ROOT_USER_ID"],
+    "Content-Type": "application/json",
+}
+
+
+def api_request(method, path, body=None):
+    data = None
+    headers = dict(AUTH_HEADERS)
+    if body is not None:
+        data = json.dumps(body).encode()
+    req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        payload = exc.read().decode()
+        raise RuntimeError(f"{method} {path} failed ({exc.code}): {payload}") from exc
+
+
+def ensure_success(resp, action):
+    if not resp.get("success"):
+        raise RuntimeError(f"{action} failed: {json.dumps(resp, ensure_ascii=False)}")
+
+
+def find_by_name(items, name):
+    for item in items or []:
+        if item.get("name") == name:
+            return item
+    return None
+
+
+channel_name = os.environ["VLLM_CHANNEL_NAME"]
+channel_search = api_request("GET", f"/api/channel/search?keyword={channel_name}&page_size=50")
+ensure_success(channel_search, "search channel")
+channel_items = (channel_search.get("data") or {}).get("items") or []
+existing_channel = find_by_name(channel_items, channel_name)
+
+if existing_channel:
+    channel_action = "exists"
+else:
+    create_channel = api_request("POST", "/api/channel/", {
+        "mode": "single",
+        "channel": {
+            "name": channel_name,
+            "type": 1,
+            "key": os.environ["VLLM_CHANNEL_KEY"],
+            "base_url": os.environ["VLLM_CHANNEL_BASE_URL"],
+            "models": os.environ["VLLM_MODEL_NAME"],
+            "group": "default",
+            "status": 1,
+            "auto_ban": 0,
+        },
+    })
+    ensure_success(create_channel, "create channel")
+    channel_action = "created"
+
+token_name = os.environ["VLLM_TOKEN_NAME"]
+token_search = api_request("GET", f"/api/token/search?keyword={token_name}&page_size=50")
+ensure_success(token_search, "search token")
+token_items = (token_search.get("data") or {}).get("items") or []
+existing_token = find_by_name(token_items, token_name)
+
+if existing_token:
+    token_id = existing_token["id"]
+    token_action = "exists"
+else:
+    create_token = api_request("POST", "/api/token/", {
+        "name": token_name,
+        "unlimited_quota": True,
+        "expired_time": -1,
+        "group": "default",
+        "model_limits_enabled": False,
+    })
+    ensure_success(create_token, "create token")
+    token_search = api_request("GET", f"/api/token/search?keyword={token_name}&page_size=50")
+    ensure_success(token_search, "search token after create")
+    token_items = (token_search.get("data") or {}).get("items") or []
+    created_token = find_by_name(token_items, token_name)
+    if not created_token:
+        raise RuntimeError("token created but not found")
+    token_id = created_token["id"]
+    token_action = "created"
+
+key_resp = api_request("POST", f"/api/token/{token_id}/key", {})
+ensure_success(key_resp, "get token key")
+api_key = (key_resp.get("data") or {}).get("key", "")
+if not api_key:
+    raise RuntimeError("token key is empty")
+
+print(json.dumps({
+    "channel_action": channel_action,
+    "token_action": token_action,
+    "api_key": api_key,
+}, ensure_ascii=False))
+PY
+  )"
+
+  GENERATED_API_TOKEN="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['api_key'])")"
+  CHANNEL_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['channel_action'])")"
+  TOKEN_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['token_action'])")"
+
+  info "渠道「${VLLM_CHANNEL_NAME}」: ${CHANNEL_ACTION}"
+  info "令牌「${VLLM_TOKEN_NAME}」: ${TOKEN_ACTION}"
+}
+
 main() {
   require_cmd kubectl
   validate_config
+  calc_total_steps
 
   mkdir -p "${DATA_HOST_PATH}" "${PG_DATA_HOST_PATH}"
   info "New API 数据目录: ${DATA_HOST_PATH}"
@@ -174,30 +337,33 @@ main() {
 
   apply_manifest "${SCRIPT_DIR}/configmap.yaml"
 
-  info "[1/4] 部署 PostgreSQL..."
+  info "[1/${TOTAL_STEPS}] 部署 PostgreSQL..."
   render_postgres_manifest | kubectl apply -f -
   info "等待 PostgreSQL 就绪..."
   kubectl -n "${NAMESPACE}" rollout status statefulset/postgres --timeout=300s
 
-  info "[2/4] 部署 Redis..."
+  info "[2/${TOTAL_STEPS}] 部署 Redis..."
   render_redis_manifest | kubectl apply -f -
   info "等待 Redis 就绪..."
   kubectl -n "${NAMESPACE}" rollout status deployment/redis --timeout=180s
 
-  info "[3/4] 部署 New API..."
+  info "[3/${TOTAL_STEPS}] 部署 New API..."
   render_new_api_manifest | kubectl apply -f -
   info "等待 New API 就绪..."
   kubectl -n "${NAMESPACE}" rollout status deployment/new-api --timeout=300s
 
-  if [[ "${DEPLOY_VLLM}" == "true" ]]; then
-    deploy_vllm
-  else
-    info "跳过 vLLM 部署（DEPLOY_VLLM=${DEPLOY_VLLM}）"
-  fi
-
   NODE_IP="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)"
   if [[ -z "${NODE_IP}" ]]; then
     NODE_IP="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')"
+  fi
+
+  if [[ "${DEPLOY_VLLM}" == "true" ]]; then
+    deploy_vllm
+    if [[ "${AUTO_REGISTER_VLLM}" == "true" ]]; then
+      register_vllm_in_new_api
+    fi
+  else
+    info "跳过 vLLM 部署（DEPLOY_VLLM=${DEPLOY_VLLM}）"
   fi
 
   echo ""
@@ -214,9 +380,18 @@ main() {
   echo "         http://${NODE_IP}:${NODE_PORT}/api/user/self"
   echo ""
   if [[ "${DEPLOY_VLLM}" == "true" ]]; then
+    echo "  vLLM 渠道:    ${VLLM_CHANNEL_NAME} → ${VLLM_CHANNEL_BASE_URL}"
     echo "  vLLM 模型:    ${VLLM_MODEL_NAME}"
-    echo "  vLLM 集群内:  http://${VLLM_RELEASE_NAME}-service.${NAMESPACE}.svc.cluster.local/v1"
     echo "  模型目录:     ${VLLM_MODEL_HOST_PATH}"
+    if [[ "${AUTO_REGISTER_VLLM}" == "true" && -n "${GENERATED_API_TOKEN:-}" ]]; then
+      echo "  API Token:    sk-${GENERATED_API_TOKEN}"
+      echo ""
+      echo "  模型调用示例:"
+      echo "    curl -H \"Authorization: Bearer sk-${GENERATED_API_TOKEN}\" \\"
+      echo "         -H \"Content-Type: application/json\" \\"
+      echo "         -d '{\"model\":\"${VLLM_MODEL_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}' \\"
+      echo "         http://${NODE_IP}:${NODE_PORT}/v1/chat/completions"
+    fi
     echo ""
     warn "请确保模型文件已放入 ${VLLM_MODEL_HOST_PATH}（含 config.json 等权重文件）"
   fi
