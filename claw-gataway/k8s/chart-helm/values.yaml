@@ -2,14 +2,21 @@
 # -- Declare variables to be passed into your templates.
 
 # -- Model name exposed by vLLM (--served-model-name)
-servedModelName: "qwen2.5-7b"
+servedModelName: "Qwen3.5-35B-A3B"
 
 # -- Image configuration
 image:
   # -- Image repository
   repository: "swr.cn-east-3.myhuaweicloud.com/kubesre/docker.io/vllm/vllm-openai"
-  # -- Image tag
-  tag: "latest"
+  # -- Image tag (Qwen3.5 MoE 需 >= v0.17.1，推荐 v0.19.0+)
+  tag: "v0.19.0"
+
+# -- Pass --trust-remote-code when loading models with custom architectures
+trustRemoteCode: true
+
+# -- Extra vLLM serve arguments (each item is one CLI arg)
+# Qwen3.5 MoE example: ["--reasoning-parser", "qwen3", "--max-model-len", "32768"]
+extraArgs: []
 
 # -- Container port
 containerPort: 8000
@@ -29,11 +36,11 @@ deploymentStrategy: {}
 # -- Resource configuration
 resources:
   requests:
-    cpu: 4
-    memory: 16Gi
+    cpu: 8
+    memory: 32Gi
   limits:
-    cpu: 4
-    memory: 16Gi
+    cpu: 16
+    memory: 64Gi
 
 # -- GPU scheduling
 gpu:
@@ -78,7 +85,7 @@ extraInit:
     # -- Storage type: local mounts node hostPath; pvc creates a PVC (use with S3 download)
     type: local
     # -- Node-local directory containing model weights (used when storage.type=local)
-    hostPath: "/data/models/qwen2.5-7b"
+    hostPath: "/data/models/Qwen3.5-35B-A3B"
 
   # -- Model download from S3 (optional, disable when using local storage)
   modelDownload:
@@ -135,7 +142,7 @@ extraInit:
   #       runAsUser: 1000
 
   # -- Path of the model on S3 (only used when modelDownload.enabled=true)
-  s3modelpath: "relative_s3_model_path/qwen2.5-7b"
+  s3modelpath: "relative_s3_model_path/Qwen3.5-35B-A3B"
   # -- Storage size for the PVC (only used when storage.type=pvc)
   pvcStorage: "1Gi"
   # -- Disable AWS EC2 metadata service
@@ -146,8 +153,7 @@ extraContainers: []
 
 # -- Readiness probe configuration
 readinessProbe:
-  # -- Number of seconds after the container has started before readiness probe is initiated
-  initialDelaySeconds: 5
+  initialDelaySeconds: 120
   # -- How often (in seconds) to perform the readiness probe
   periodSeconds: 5
   # -- Number of times after which if a probe fails in a row, Kubernetes considers that the overall check has failed: the container is not ready
@@ -161,8 +167,7 @@ readinessProbe:
 
 # -- Liveness probe configuration
 livenessProbe:
- # -- Number of seconds after the container has started before liveness probe is initiated
-  initialDelaySeconds: 15
+  initialDelaySeconds: 300
   # -- Number of times after which if a probe fails in a row, Kubernetes considers that the overall check has failed: the container is not alive
   failureThreshold: 3
   # -- How often (in seconds) to perform the liveness probe

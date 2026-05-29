@@ -1,0 +1,137 @@
+2026-05-29 13:49:39 - evalscope - INFO: Starting benchmark with args: 
+2026-05-29 13:49:39 - evalscope - INFO: {
+    "model": "Qwen3.5-35B-A3B-FP8",
+    "model_id": "Qwen3.5-35B-A3B-FP8",
+    "attn_implementation": null,
+    "api": "openai",
+    "tokenizer_path": "Qwen/Qwen3.5-35B-A3B-FP8",
+    "port": 8877,
+    "url": "http://192.169.223.233:8000/v1/chat/completions",
+    "headers": {},
+    "connect_timeout": null,
+    "read_timeout": null,
+    "total_timeout": 21600,
+    "api_key": null,
+    "no_test_connection": false,
+    "number": 1,
+    "parallel": 1,
+    "rate": -1.0,
+    "warmup_num": 0,
+    "open_loop": false,
+    "sleep_interval": 5,
+    "duration": null,
+    "sla_auto_tune": false,
+    "sla_variable": "parallel",
+    "sla_params": null,
+    "sla_num_runs": 3,
+    "sla_upper_bound": 65536,
+    "sla_lower_bound": 1,
+    "sla_fixed_parallel": null,
+    "sla_number_multiplier": null,
+    "db_commit_interval": 1000,
+    "queue_size_multiplier": 5,
+    "in_flight_task_multiplier": 2,
+    "log_every_n_query": 500,
+    "debug": false,
+    "enable_progress_tracker": false,
+    "visualizer": null,
+    "wandb_api_key": null,
+    "swanlab_api_key": null,
+    "swanlab_host": null,
+    "name": null,
+    "outputs_dir": "outputs/20260529_134939/Qwen3.5-35B-A3B-FP8",
+    "no_timestamp": false,
+    "max_prompt_length": 100,
+    "min_prompt_length": 100,
+    "prefix_length": 0,
+    "prompt": null,
+    "query_template": null,
+    "apply_chat_template": true,
+    "image_width": 224,
+    "image_height": 224,
+    "image_format": "RGB",
+    "image_num": 1,
+    "image_patch_size": 28,
+    "dataset": "random",
+    "dataset_path": null,
+    "dataset_offset": 0,
+    "frequency_penalty": null,
+    "repetition_penalty": null,
+    "logprobs": null,
+    "max_tokens": 100,
+    "min_tokens": null,
+    "n_choices": null,
+    "seed": null,
+    "stop": null,
+    "stop_token_ids": null,
+    "stream": true,
+    "temperature": 0.0,
+    "top_p": null,
+    "top_k": null,
+    "extra_args": {
+        "ignore_eos": true
+    },
+    "tokenize_prompt": false,
+    "multi_turn": false,
+    "min_turns": 1,
+    "max_turns": null,
+    "multi_turn_args": null
+}
+2026-05-29 13:49:39 - evalscope - INFO: uvloop event loop policy installed (asyncio.sleep precision improved)
+2026-05-29 13:49:43 - evalscope - INFO: Test connection successful.
+2026-05-29 13:49:45 - evalscope - INFO: Using 248068 allowed tokens out of 248077 total tokens (excluded 9 special/byte-fallback tokens)
+2026-05-29 13:49:45 - evalscope - INFO: Sampling input lengths from [90, 91)
+2026-05-29 13:49:45 - evalscope - INFO: Generating[requests] 100%| 1/1 [Elapsed: 00:00 < Remaining: ?, ?it/s]
+2026-05-29 13:49:45 - evalscope - INFO: Save the data base to: outputs/20260529_134939/Qwen3.5-35B-A3B-FP8/parallel_1_number_1/benchmark_data.db
+2026-05-29 13:49:46 - evalscope - INFO: Processing[parallel_1_number_1] 100%| 1/1 [Elapsed: 00:00 < Remaining: 00:00,  1.26it/s]
+2026-05-29 13:49:46 - evalscope - INFO: 
+Benchmarking summary:
+┌───────────────────────────┬───────────┐
+│ Metric                    │     Value │
+├───────────────────────────┼───────────┤
+│ ── General ──             │           │
+│ Test Duration (s)         │      0.79 │
+│ Concurrency               │         1 │
+│ Request Rate (req/s)      │     -1.00 │
+│ Total / Success / Failed  │ 1 / 1 / 0 │
+│ Req Throughput (req/s)    │      1.26 │
+│ ── Latency ──             │           │
+│ Avg Latency (s)           │      0.79 │
+│ TTFT (ms)                 │     49.39 │
+│ TPOT (ms)                 │      7.49 │
+│ ITL (ms)                  │      7.42 │
+│ ── Tokens ──              │           │
+│ Avg Input Tokens          │    100.00 │
+│ Avg Output Tokens         │    100.00 │
+│ Output Throughput (tok/s) │    126.40 │
+│ Total Throughput (tok/s)  │    252.79 │
+└───────────────────────────┴───────────┘
+2026-05-29 13:49:46 - evalscope - INFO: 
+Percentile results:
+┌────────────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┐
+│ Metric         │     1% │     5% │    10% │    25% │    50% │    75% │    90% │    95% │    99% │    max │
+├────────────────┼────────┼────────┼────────┼────────┼────────┼────────┼────────┼────────┼────────┼────────┤
+│ Latency (s)    │   0.79 │   0.79 │   0.79 │   0.79 │   0.79 │   0.79 │   0.79 │   0.79 │   0.79 │   0.79 │
+│ TTFT (ms)      │  49.39 │  49.39 │  49.39 │  49.39 │  49.39 │  49.39 │  49.39 │  49.39 │  49.39 │  49.39 │
+│ ITL (ms)       │   6.66 │   6.89 │   7.16 │   7.32 │   7.50 │   7.65 │   7.84 │   8.01 │   8.62 │   8.62 │
+│ TPOT (ms)      │   7.49 │   7.49 │   7.49 │   7.49 │   7.49 │   7.49 │   7.49 │   7.49 │   7.49 │   7.49 │
+│ Input tokens   │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │
+│ Output tokens  │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │ 100.00 │
+│ Output (tok/s) │ 126.40 │ 126.40 │ 126.40 │ 126.40 │ 126.40 │ 126.40 │ 126.40 │ 126.40 │ 126.40 │ 126.40 │
+│ Total (tok/s)  │ 252.79 │ 252.79 │ 252.79 │ 252.79 │ 252.79 │ 252.79 │ 252.79 │ 252.79 │ 252.79 │ 252.79 │
+│ Decode (tok/s) │ 133.46 │ 133.46 │ 133.46 │ 133.46 │ 133.46 │ 133.46 │ 133.46 │ 133.46 │ 133.46 │ 133.46 │
+└────────────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+2026-05-29 13:49:46 - evalscope - INFO: 
+Workload throughput (1 samples):
+┌─────────────────────┬───────────┬────────────┬─────────────────────┐
+│ Metric (tok/s)      │   Overall │   Last 30s │   Steady (drop 20%) │
+├─────────────────────┼───────────┼────────────┼─────────────────────┤
+│ Total Prompt tok/s  │    126.40 │     126.40 │              126.40 │
+│ New Prompt tok/s    │    126.40 │     126.40 │              126.40 │
+│ Cached Prompt tok/s │      0.00 │       0.00 │                0.00 │
+│ Completion tok/s    │    126.40 │     126.40 │              126.40 │
+└─────────────────────┴───────────┴────────────┴─────────────────────┘
+2026-05-29 13:49:46 - evalscope - INFO: Save the summary to: outputs/20260529_134939/Qwen3.5-35B-A3B-FP8/parallel_1_number_1
+2026-05-29 13:49:46 - evalscope - INFO: Running[perf] 100%| 1/1 [Elapsed: 00:07 < Remaining: 00:00,  7.36s/it]
+2026-05-29 13:49:47 - evalscope - INFO: Performance summary saved to: outputs/20260529_134939/Qwen3.5-35B-A3B-FP8/performance_summary.txt
+2026-05-29 13:49:47 - evalscope - INFO: HTML report generated: /home/xcloud/claw-gataway/k8s/outputs/20260529_134939/Qwen3.5-35B-A3B-FP8/perf_report.html

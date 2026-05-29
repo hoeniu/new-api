@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # New API Kubernetes 一键部署脚本
-# 使用前请修改下方「必填配置」中的环境变量，然后执行: ./install.sh
+# 使用前请修改下方「必填配置」中的环境变量，然后执行: ./deploy.sh
 #
 set -euo pipefail
 
@@ -53,13 +53,8 @@ PG_DATA_HOST_PATH="/data/pgdata"
 # vLLM 模型服务（Helm chart-helm，本地 hostPath 挂载）
 DEPLOY_VLLM="true"
 VLLM_RELEASE_NAME="vllm"
-VLLM_MODEL_NAME="Qwen3.5-35B-A3B-FP8"
+VLLM_MODEL_NAME="qwen2.5-7b"
 VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
-# vLLM 镜像（Qwen3.5 MoE 架构 qwen3_5_moe 需 vLLM >= 0.17.1，推荐 v0.19.0）
-VLLM_IMAGE_REPO="vllm/vllm-openai"
-VLLM_IMAGE_TAG="latest"
-# 额外启动参数（JSON 数组，每项为一个 CLI 参数）
-VLLM_EXTRA_ARGS_JSON='["--tensor-parallel-size","2","--enable-expert-parallel","--language-model-only","--reasoning-parser","qwen3","--max-model-len","8192","--gpu-memory-utilization","0.90"]'
 # GPU: auto | true | false
 VLLM_GPU_ENABLED="auto"
 # 仅当集群已创建 RuntimeClass 时填写（kubectl get runtimeclass）
@@ -68,13 +63,10 @@ VLLM_GPU_RUNTIME_CLASS=""
 # vLLM 自动注册到 New API（渠道 + API Token）
 AUTO_REGISTER_VLLM="true"
 VLLM_CHANNEL_NAME="vllm"
-VLLM_CHANNEL_BASE_URL="http://vllm-service.new-api.svc.cluster.local"
+VLLM_CHANNEL_BASE_URL="http://vllm-service.new-api.svc.cluster.local/v1"
 VLLM_CHANNEL_KEY="vllm"
 VLLM_TOKEN_NAME="auto-vllm"
 NEW_API_ROOT_USER_ID="1"
-# 自动设置模型倍率（ModelRatio / CompletionRatio，默认均为 1）
-AUTO_SETUP_MODEL_PRICING="true"
-VLLM_MODEL_RATIO="1"
 
 SQL_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
 REDIS_CONN_STRING="redis://:${REDIS_PASSWORD}@redis:6379"
@@ -180,16 +172,12 @@ deploy_vllm() {
     upgrade --install "${VLLM_RELEASE_NAME}" "${SCRIPT_DIR}/chart-helm"
     -n "${NAMESPACE}"
     --set "servedModelName=${VLLM_MODEL_NAME}"
-    --set "image.repository=${VLLM_IMAGE_REPO}"
-    --set "image.tag=${VLLM_IMAGE_TAG}"
-    --set "trustRemoteCode=true"
-    --set-json "extraArgs=${VLLM_EXTRA_ARGS_JSON}"
     --set "extraInit.storage.hostPath=${VLLM_MODEL_HOST_PATH}"
     --set "gpu.enabled=${gpu_enabled}"
   )
 
   if [[ "${gpu_enabled}" == "true" ]]; then
-    helm_args+=(--set "gpu.count=2")
+    helm_args+=(--set "gpu.count=1")
     if [[ -n "${VLLM_GPU_RUNTIME_CLASS}" ]]; then
       helm_args+=(--set "gpu.runtimeClassName=${VLLM_GPU_RUNTIME_CLASS}")
     fi
@@ -224,7 +212,7 @@ register_vllm_in_new_api() {
   require_cmd curl
   require_cmd python3
 
-  info "[${TOTAL_STEPS}/${TOTAL_STEPS}] 自动注册 vLLM 渠道、Token 与模型定价..."
+  info "[${TOTAL_STEPS}/${TOTAL_STEPS}] 自动注册 vLLM 渠道与 API Token..."
   wait_new_api_api
 
   REGISTER_RESULT="$(
@@ -237,8 +225,6 @@ register_vllm_in_new_api() {
     VLLM_CHANNEL_KEY="${VLLM_CHANNEL_KEY}" \
     VLLM_MODEL_NAME="${VLLM_MODEL_NAME}" \
     VLLM_TOKEN_NAME="${VLLM_TOKEN_NAME}" \
-    AUTO_SETUP_MODEL_PRICING="${AUTO_SETUP_MODEL_PRICING}" \
-    VLLM_MODEL_RATIO="${VLLM_MODEL_RATIO}" \
     python3 <<'PY'
 import json
 import os
@@ -280,29 +266,6 @@ def find_by_name(items, name):
     return None
 
 
-def get_option_json(key):
-    resp = api_request("GET", "/api/option/")
-    ensure_success(resp, "get options")
-    for item in resp.get("data") or []:
-        if item.get("key") == key:
-            raw = item.get("value") or "{}"
-            try:
-                return json.loads(raw) if raw.strip() else {}
-            except json.JSONDecodeError:
-                return {}
-    return {}
-
-
-def upsert_option_ratio(key, model_name, ratio):
-    payload = get_option_json(key)
-    payload[model_name] = float(ratio)
-    update = api_request("PUT", "/api/option/", {
-        "key": key,
-        "value": json.dumps(payload, ensure_ascii=False),
-    })
-    ensure_success(update, f"update option {key}")
-
-
 channel_name = os.environ["VLLM_CHANNEL_NAME"]
 channel_search = api_request("GET", f"/api/channel/search?keyword={channel_name}&page_size=50")
 ensure_success(channel_search, "search channel")
@@ -310,15 +273,7 @@ channel_items = (channel_search.get("data") or {}).get("items") or []
 existing_channel = find_by_name(channel_items, channel_name)
 
 if existing_channel:
-    expected_base_url = os.environ["VLLM_CHANNEL_BASE_URL"]
-    if existing_channel.get("base_url") != expected_base_url:
-        existing_channel["base_url"] = expected_base_url
-        existing_channel["models"] = os.environ["VLLM_MODEL_NAME"]
-        update_channel = api_request("PUT", "/api/channel/", existing_channel)
-        ensure_success(update_channel, "update channel")
-        channel_action = "updated"
-    else:
-        channel_action = "exists"
+    channel_action = "exists"
 else:
     create_channel = api_request("POST", "/api/channel/", {
         "mode": "single",
@@ -337,7 +292,6 @@ else:
     channel_action = "created"
 
 token_name = os.environ["VLLM_TOKEN_NAME"]
-model_name = os.environ["VLLM_MODEL_NAME"]
 token_search = api_request("GET", f"/api/token/search?keyword={token_name}&page_size=50")
 ensure_success(token_search, "search token")
 token_items = (token_search.get("data") or {}).get("items") or []
@@ -345,25 +299,14 @@ existing_token = find_by_name(token_items, token_name)
 
 if existing_token:
     token_id = existing_token["id"]
-    if (
-        not existing_token.get("model_limits_enabled")
-        or existing_token.get("model_limits") != model_name
-    ):
-        existing_token["model_limits_enabled"] = True
-        existing_token["model_limits"] = model_name
-        update_token = api_request("PUT", "/api/token/", existing_token)
-        ensure_success(update_token, "update token model limits")
-        token_action = "updated"
-    else:
-        token_action = "exists"
+    token_action = "exists"
 else:
     create_token = api_request("POST", "/api/token/", {
         "name": token_name,
         "unlimited_quota": True,
         "expired_time": -1,
         "group": "default",
-        "model_limits_enabled": True,
-        "model_limits": model_name,
+        "model_limits_enabled": False,
     })
     ensure_success(create_token, "create token")
     token_search = api_request("GET", f"/api/token/search?keyword={token_name}&page_size=50")
@@ -381,18 +324,9 @@ api_key = (key_resp.get("data") or {}).get("key", "")
 if not api_key:
     raise RuntimeError("token key is empty")
 
-pricing_action = "skipped"
-model_ratio = os.environ.get("VLLM_MODEL_RATIO", "1")
-if os.environ.get("AUTO_SETUP_MODEL_PRICING", "true").lower() == "true":
-    upsert_option_ratio("ModelRatio", model_name, model_ratio)
-    upsert_option_ratio("CompletionRatio", model_name, model_ratio)
-    pricing_action = "configured"
-
 print(json.dumps({
     "channel_action": channel_action,
     "token_action": token_action,
-    "pricing_action": pricing_action,
-    "model_ratio": model_ratio,
     "api_key": api_key,
 }, ensure_ascii=False))
 PY
@@ -401,13 +335,9 @@ PY
   GENERATED_API_TOKEN="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['api_key'])")"
   CHANNEL_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['channel_action'])")"
   TOKEN_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['token_action'])")"
-  PRICING_ACTION="$(echo "${REGISTER_RESULT}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pricing_action','skipped'))")"
 
   info "渠道「${VLLM_CHANNEL_NAME}」: ${CHANNEL_ACTION}"
-  info "令牌「${VLLM_TOKEN_NAME}」: ${TOKEN_ACTION}（模型限制: ${VLLM_MODEL_NAME}）"
-  if [[ "${PRICING_ACTION}" == "configured" ]]; then
-    info "模型定价: ${VLLM_MODEL_NAME} ModelRatio=${VLLM_MODEL_RATIO} CompletionRatio=${VLLM_MODEL_RATIO}"
-  fi
+  info "令牌「${VLLM_TOKEN_NAME}」: ${TOKEN_ACTION}"
 }
 
 main() {
@@ -490,25 +420,12 @@ main() {
     echo "  模型目录:     ${VLLM_MODEL_HOST_PATH}"
     if [[ "${AUTO_REGISTER_VLLM}" == "true" && -n "${GENERATED_API_TOKEN:-}" ]]; then
       echo "  API Token:    sk-${GENERATED_API_TOKEN}"
-      echo "  模型限制:     ${VLLM_MODEL_NAME}"
-      if [[ "${AUTO_SETUP_MODEL_PRICING}" == "true" ]]; then
-        echo "  模型倍率:     ${VLLM_MODEL_NAME} = ${VLLM_MODEL_RATIO}"
-      fi
       echo ""
       echo "  模型调用示例:"
       echo "    curl -H \"Authorization: Bearer sk-${GENERATED_API_TOKEN}\" \\"
       echo "         -H \"Content-Type: application/json\" \\"
       echo "         -d '{\"model\":\"${VLLM_MODEL_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}' \\"
       echo "         http://${NODE_IP}:${NODE_PORT}/v1/chat/completions"
-      if [[ "${AUTO_SETUP_MODEL_PRICING}" == "true" ]]; then
-        echo ""
-        echo "  手动设置模型倍率示例 (Root):"
-        echo "    curl -X PUT -H \"Authorization: ${INIT_WEB_ACCESS_TOKEN}\" \\"
-        echo "         -H \"New-Api-User: ${NEW_API_ROOT_USER_ID}\" \\"
-        echo "         -H \"Content-Type: application/json\" \\"
-        echo "         -d '{\"key\":\"ModelRatio\",\"value\":\"{\\\"${VLLM_MODEL_NAME}\\\":${VLLM_MODEL_RATIO}}\"}' \\"
-        echo "         http://${NODE_IP}:${NODE_PORT}/api/option/"
-      fi
     fi
     echo ""
     warn "请确保模型文件已放入 ${VLLM_MODEL_HOST_PATH}（含 config.json 等权重文件）"

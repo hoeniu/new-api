@@ -133,11 +133,12 @@ Define vLLM container command (all args must be strings for Kubernetes)
 - /data/
 - --served-model-name
 - {{ required "Value 'servedModelName' must be defined !" .Values.servedModelName | quote }}
-- --enforce-eager
-- --dtype
-- bfloat16
-- --block-size
-- "16"
+{{- if .Values.trustRemoteCode }}
+- --trust-remote-code
+{{- end }}
+{{- range .Values.extraArgs }}
+- {{ . | quote }}
+{{- end }}
 - --host
 - "0.0.0.0"
 - --port
