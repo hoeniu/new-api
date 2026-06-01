@@ -98,10 +98,15 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 	// Try getting from Redis first
 	userCache, err = cacheGetUserBase(userId)
 	if err == nil {
-		return userCache, nil
+		// Status 0 is never valid (see common.UserStatusEnabled). A hash with only
+		// Quota (from GetUserQuota / cacheDecrUserQuota) must not be treated as a full cache hit.
+		if userCache.Status != 0 {
+			return userCache, nil
+		}
+		_ = invalidateUserCache(userId)
 	}
 
-	// If Redis fails, get from DB
+	// If Redis fails or cache was incomplete, get from DB
 	fromDB = true
 	user, err = GetUserById(userId, false)
 	if err != nil {
