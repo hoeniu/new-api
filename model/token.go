@@ -281,7 +281,12 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		// Try Redis first
 		token, err := cacheGetTokenByKey(key)
 		if err == nil {
-			return token, nil
+			// Status/UserId/Id 0 are never valid. A hash with only RemainQuota
+			// (from cacheDecrTokenQuota / cacheIncrTokenQuota) must not be a cache hit.
+			if token.Id != 0 && token.UserId != 0 && token.Status != 0 {
+				return token, nil
+			}
+			_ = cacheDeleteToken(key)
 		}
 		// Don't return error - fall through to DB
 	}
