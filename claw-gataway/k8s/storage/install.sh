@@ -112,18 +112,96 @@ create_directories() {
     "${base}/log/volume" \
     "${base}/log/filer" \
     "${base}/log/s3"
+  # 容器内进程通常非 root，需保证可写
+  chmod -R a+rwx \
+    "${base}/log" \
+    "${base}/data/master" \
+    "${base}/data/filerldb2" \
+    "${base}/data/volume"
+}
+
+ensure_grpc_certs() {
+  local cert_dir="${STORAGE_DATA_ROOT}/data/cert"
+  local ca_crt="${cert_dir}/ca.crt"
+  local server_crt="${cert_dir}/server.crt"
+  local server_key="${cert_dir}/server.key"
+
+  if [[ "${STORAGE_GRPC_TLS_AUTO_CERT}" != "true" ]]; then
+    if [[ ! -f "${ca_crt}" || ! -f "${server_crt}" || ! -f "${server_key}" ]]; then
+      error "未启用自动生成证书 (STORAGE_GRPC_TLS_AUTO_CERT=false)，请手动放置 ${cert_dir}/ 下的 ca.crt、server.crt、server.key"
+      exit 1
+    fi
+    return 0
+  fi
+
+  if [[ "${STORAGE_GRPC_TLS_REGENERATE}" != "true" ]] \
+    && [[ -f "${ca_crt}" && -f "${server_crt}" && -f "${server_key}" ]]; then
+    info "gRPC TLS 证书已存在: ${cert_dir}"
+    return 0
+  fi
+
+  require_cmd openssl
+  info "生成 gRPC 自签名 TLS 证书 (节点 IP: ${STORAGE_NODE_IP}) -> ${cert_dir}"
+  mkdir -p "${cert_dir}"
+
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' RETURN
+
+  openssl genrsa -out "${tmp}/ca.key" 4096 2>/dev/null
+  openssl req -new -x509 -days 3650 -key "${tmp}/ca.key" -out "${tmp}/ca.crt" \
+    -subj "/CN=SeaweedFS-CA" 2>/dev/null
+  openssl genrsa -out "${tmp}/server.key" 2048 2>/dev/null
+
+  local san_idx=1
+  local alt_names="IP.${san_idx} = ${STORAGE_NODE_IP}"
+  san_idx=$((san_idx + 1))
+  alt_names+=$'\n'"IP.${san_idx} = 127.0.0.1"
+  san_idx=$((san_idx + 1))
+  alt_names+=$'\n'"DNS.1 = localhost"
+
+  local peer ip_host
+  IFS=',' read -r -a _peers <<< "${STORAGE_MASTER_PEERS}"
+  for peer in "${_peers[@]}"; do
+    ip_host="${peer%%:*}"
+    ip_host="$(echo "${ip_host}" | xargs)"
+    [[ -z "${ip_host}" || "${ip_host}" == "${STORAGE_NODE_IP}" || "${ip_host}" == "127.0.0.1" ]] && continue
+    alt_names+=$'\n'"IP.${san_idx} = ${ip_host}"
+    san_idx=$((san_idx + 1))
+  done
+
+  cat > "${tmp}/server.cnf" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+[req_distinguished_name]
+CN = seaweedfs
+[v3_req]
+subjectAltName = @alt_names
+[alt_names]
+${alt_names}
+EOF
+
+  openssl req -new -key "${tmp}/server.key" -out "${tmp}/server.csr" -config "${tmp}/server.cnf" 2>/dev/null
+  openssl x509 -req -in "${tmp}/server.csr" -CA "${tmp}/ca.crt" -CAkey "${tmp}/ca.key" \
+    -CAcreateserial -out "${tmp}/server.crt" -days 3650 -extensions v3_req -extfile "${tmp}/server.cnf" 2>/dev/null
+
+  install -m 0644 "${tmp}/ca.crt" "${ca_crt}"
+  install -m 0644 "${tmp}/server.crt" "${server_crt}"
+  install -m 0600 "${tmp}/server.key" "${server_key}"
+  chmod -R a+rX "${cert_dir}"
+
+  info "gRPC TLS 证书已生成（含 SAN: ${STORAGE_NODE_IP}, 127.0.0.1）"
 }
 
 install_configs() {
   local conf="${STORAGE_DATA_ROOT}/data/conf"
+  ensure_grpc_certs
   info "生成配置文件 -> ${conf}"
   render_file "${STORAGE_DIR}/templates/filer.toml" "${conf}/filer.toml"
   render_file "${STORAGE_DIR}/templates/security.toml" "${conf}/security.toml"
   render_file "${STORAGE_DIR}/templates/config.json" "${conf}/config.json"
-
-  if [[ ! -f "${STORAGE_DATA_ROOT}/data/cert/ca.crt" ]]; then
-    warn "未检测到 TLS 证书 (${STORAGE_DATA_ROOT}/data/cert/)，请放置 ca.crt / server.crt / server.key"
-  fi
 }
 
 install_systemd_unit() {

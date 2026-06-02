@@ -14,7 +14,7 @@ storage/
 ## 安装
 
 1. 编辑 `config.sh`（至少设置 `STORAGE_NODE_IP`、`STORAGE_MASTER_PEERS`、Redis 密码）
-2. 将 TLS 证书放入 `${STORAGE_DATA_ROOT}/data/cert/`（`ca.crt`、`server.crt`、`server.key`）
+2. gRPC mTLS 证书：默认由 `install.sh` 自动生成到 `${STORAGE_DATA_ROOT}/data/cert/`；生产环境可自备证书并设 `STORAGE_GRPC_TLS_AUTO_CERT=false`
 3. 在存储节点上执行：
 
 ```bash

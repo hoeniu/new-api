@@ -43,3 +43,8 @@ STORAGE_WRAPPER_SECRET_KEY="${STORAGE_WRAPPER_SECRET_KEY:-usdzH0H13YTrZncF}"
 # S3 访问密钥（config.json，可按需修改）
 STORAGE_S3_ACCESS_KEY="${STORAGE_S3_ACCESS_KEY:-admin}"
 STORAGE_S3_SECRET_KEY="${STORAGE_S3_SECRET_KEY:-ChangeMeS3SecretKey}"
+
+# gRPC mTLS（security.toml）：无证书时 install.sh 可自动生成自签名证书
+STORAGE_GRPC_TLS_AUTO_CERT="${STORAGE_GRPC_TLS_AUTO_CERT:-true}"
+# 设为 true 强制重新生成（修复 handshake failed 时可用）
+STORAGE_GRPC_TLS_REGENERATE="${STORAGE_GRPC_TLS_REGENERATE:-false}"
