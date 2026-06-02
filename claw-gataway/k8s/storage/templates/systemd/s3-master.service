@@ -1,0 +1,36 @@
+[Unit]
+Description=Seaweedfs Master Container
+Wants=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+ExecStartPre=-/bin/docker stop s3-master
+ExecStartPre=-/bin/docker rm -f s3-master
+ExecStart=/bin/docker run \
+    --rm \
+    --net=host \
+    -l app=s3 \
+    -l component=seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/master:/data/seaweedfs/master \
+    -v __STORAGE_DATA_ROOT__/data/conf:/etc/seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/cert:/data/cert \
+    -v __STORAGE_DATA_ROOT__/log/master:/data/seaweedfs/log \
+    --name s3-master \
+    __SEAWEEDFS_IMAGE__ \
+    -logdir=/data/seaweedfs/log \
+    master \
+    -mdir=/data/seaweedfs/master \
+    -volumeSizeLimitMB=__VOLUME_SIZE_LIMIT_MB__ \
+    -ip=__NODE_IP__ \
+    -port=__MASTER_PORT__ \
+    -port.grpc=__MASTER_GRPC_PORT__ \
+    -disableHttp \
+    -peers=__MASTER_PEERS__ \
+    -defaultReplication=__DEFAULT_REPLICATION__
+
+ExecStop=/bin/docker stop s3-master
+ExecStopPost=/bin/docker rm -f s3-master
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,37 @@
+[Unit]
+Description=Seaweedfs Volume Container
+Wants=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+ExecStartPre=-/bin/docker stop s3-volume
+ExecStartPre=-/bin/docker rm -f s3-volume
+ExecStart=/bin/docker run \
+    --rm \
+    --net=host \
+    -l app=s3 \
+    -l component=seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/conf:/etc/seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/cert:/data/cert \
+    -v __STORAGE_DATA_ROOT__/log/volume:/data/seaweedfs/log \
+    -v __STORAGE_DATA_ROOT__/data/volume:/data/volume-1 \
+    --name s3-volume \
+    __SEAWEEDFS_IMAGE__ \
+    -logdir=/data/seaweedfs/log \
+    volume \
+    -dir=/data/volume-1 \
+    -max=__VOLUME_MAX__ \
+    -dataCenter=__VOLUME_DATA_CENTER__ \
+    -rack=__VOLUME_RACK__ \
+    -ip=__NODE_IP__ \
+    -metricsPort=9325 \
+    -port=__VOLUME_PORT__ \
+    -port.grpc=__VOLUME_GRPC_PORT__ \
+    -mserver=__MASTER_PEERS__
+
+ExecStop=/bin/docker stop s3-volume
+ExecStopPost=/bin/docker rm -f s3-volume
+
+[Install]
+WantedBy=multi-user.target

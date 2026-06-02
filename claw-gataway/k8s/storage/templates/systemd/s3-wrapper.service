@@ -1,0 +1,28 @@
+[Unit]
+Description=Seaweedfs Wrapper Container
+Wants=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+ExecStartPre=-/bin/docker stop s3-wrapper
+ExecStartPre=-/bin/docker rm -f s3-wrapper
+ExecStart=/bin/docker run \
+    --rm \
+    --net=host \
+    -l app=s3 \
+    -l component=seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/conf:/etc/seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/cert:/data/cert \
+    --name s3-wrapper \
+    __WRAPPER_IMAGE__ \
+    -master=localhost:__MASTER_PORT__ \
+    -filer=localhost:__FILER_PORT__ \
+    -port=__WRAPPER_PORT__ \
+    -secretKey=__WRAPPER_SECRET_KEY__
+
+ExecStop=/bin/docker stop s3-wrapper
+ExecStopPost=/bin/docker rm -f s3-wrapper
+
+[Install]
+WantedBy=multi-user.target

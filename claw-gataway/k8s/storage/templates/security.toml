@@ -1,0 +1,78 @@
+[cors.allowed_origins]
+values = "*"
+
+[access]
+ui = false
+
+[filer.expose_directory_metadata]
+enabled = true
+
+[jwt.signing]
+key = ""
+expires_after_seconds = 120
+
+[jwt.signing.read]
+key = ""
+expires_after_seconds = 120
+
+[jwt.filer_signing]
+key = "__JWT_FILER_KEY__"
+expires_after_seconds = 120
+
+[jwt.filer_signing.read]
+key = "__JWT_FILER_KEY__"
+expires_after_seconds = 120
+
+[grpc]
+ca = "/data/cert/ca.crt"
+allowed_wildcard_domain = ""
+
+[grpc.volume]
+cert = "/data/cert/server.crt"
+key = "/data/cert/server.key"
+allowed_commonNames = ""
+
+[grpc.master]
+cert = "/data/cert/server.crt"
+key = "/data/cert/server.key"
+allowed_commonNames = ""
+
+[grpc.filer]
+cert = "/data/cert/server.crt"
+key = "/data/cert/server.key"
+allowed_commonNames = ""
+
+[grpc.s3]
+cert = ""
+key = ""
+allowed_commonNames = ""
+
+[grpc.msg_broker]
+cert = ""
+key = ""
+allowed_commonNames = ""
+
+[grpc.client]
+cert = "/data/cert/server.crt"
+key = "/data/cert/server.key"
+
+[https.client]
+enabled = false
+cert = ""
+key = ""
+ca = ""
+
+[https.volume]
+cert = ""
+key = ""
+ca = ""
+
+[https.master]
+cert = ""
+key = ""
+ca = ""
+
+[https.filer]
+cert = ""
+key = ""
+ca = ""

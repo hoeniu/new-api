@@ -3,6 +3,10 @@
 # New API Kubernetes 一键部署脚本
 # 使用前请修改下方「必填配置」中的环境变量，然后执行: ./install.sh
 #
+# 仅安装 SeaweedFS 存储（宿主机 systemd，与 K8s/vLLM 无关）:
+#   sudo ./install.sh storage
+# 或在完整部署时设置 DEPLOY_STORAGE=true
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,6 +79,10 @@ NEW_API_ROOT_USER_ID="1"
 # 自动设置模型倍率（ModelRatio / CompletionRatio，默认均为 1）
 AUTO_SETUP_MODEL_PRICING="true"
 VLLM_MODEL_RATIO="1"
+
+# SeaweedFS S3 存储（宿主机 Docker+systemd，非 K8s；与 vLLM 本地模型无关）
+# 配置见 storage/config.sh；仅存储: sudo ./install.sh storage
+DEPLOY_STORAGE="true"
 
 SQL_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
 REDIS_CONN_STRING="redis://:${REDIS_PASSWORD}@redis:6379"
@@ -410,7 +418,22 @@ PY
   fi
 }
 
+deploy_storage() {
+  local storage_install="${SCRIPT_DIR}/storage/install.sh"
+  if [[ ! -f "${storage_install}" ]]; then
+    error "未找到存储安装脚本: ${storage_install}"
+    exit 1
+  fi
+  info "安装 SeaweedFS 存储（宿主机，见 storage/config.sh）..."
+  bash "${storage_install}"
+}
+
 main() {
+  if [[ "${1:-}" == "storage" ]]; then
+    deploy_storage
+    exit 0
+  fi
+
   require_cmd kubectl
   validate_config
   calc_total_steps
@@ -469,6 +492,10 @@ main() {
     fi
   else
     info "跳过 vLLM 部署（DEPLOY_VLLM=${DEPLOY_VLLM}）"
+  fi
+
+  if [[ "${DEPLOY_STORAGE}" == "true" ]]; then
+    deploy_storage
   fi
 
   echo ""

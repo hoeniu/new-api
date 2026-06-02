@@ -1,0 +1,32 @@
+[Unit]
+Description=Seaweedfs S3 Container
+Wants=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+ExecStartPre=-/bin/docker stop s3-s3
+ExecStartPre=-/bin/docker rm -f s3-s3
+ExecStart=/bin/docker run \
+    --rm \
+    --net=host \
+    -l app=s3 \
+    -l component=seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/conf:/etc/seaweedfs \
+    -v __STORAGE_DATA_ROOT__/data/cert:/data/cert \
+    -v __STORAGE_DATA_ROOT__/log/s3:/data/seaweedfs/log \
+    --name s3-s3 \
+    __SEAWEEDFS_IMAGE__ \
+    -logdir=/data/seaweedfs/log \
+    s3 \
+    -port=__S3_PORT__ \
+    -port.grpc=__S3_GRPC_PORT__ \
+    -filer=localhost:__FILER_PORT__ \
+    -config=/etc/seaweedfs/config.json \
+    -ip.bind=0.0.0.0
+
+ExecStop=/bin/docker stop s3-s3
+ExecStopPost=/bin/docker rm -f s3-s3
+
+[Install]
+WantedBy=multi-user.target
