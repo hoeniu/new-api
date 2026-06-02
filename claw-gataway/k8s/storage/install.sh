@@ -118,6 +118,9 @@ create_directories() {
     "${base}/data/master" \
     "${base}/data/filerldb2" \
     "${base}/data/volume"
+  # leveldb2 元数据目录（与 filer.toml 中 dir 一致）
+  mkdir -p "${base}/data/filerldb2"
+  chmod a+rwx "${base}/data/filerldb2"
 }
 
 ensure_grpc_certs() {
