@@ -5,8 +5,6 @@ After=docker.service
 
 [Service]
 Restart=always
-ExecStartPre=-/bin/docker stop s3-s3
-ExecStartPre=-/bin/docker rm -f s3-s3
 ExecStart=/bin/docker run \
     --rm \
     --net=host \
