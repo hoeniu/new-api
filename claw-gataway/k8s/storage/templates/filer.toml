@@ -2,9 +2,6 @@
 recursive_delete = false
 max_file_name_length = 512
 
-[redis2_sentinel]
+[leveldb2]
 enabled = true
-addresses = __REDIS_SENTINEL_ADDRS_JSON__
-masterName = "__REDIS_SENTINEL_MASTER__"
-username = ""
-password = "__REDIS_PASSWORD__"
+dir = "/data/filerldb2"

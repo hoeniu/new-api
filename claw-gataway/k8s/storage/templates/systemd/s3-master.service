@@ -24,8 +24,6 @@ ExecStart=/bin/docker run \
     -port=__MASTER_PORT__ \
     -port.grpc=__MASTER_GRPC_PORT__ \
     -disableHttp \
-    -peers=__MASTER_PEERS__ \
-    -defaultReplication=__DEFAULT_REPLICATION__
 
 ExecStop=/bin/docker stop s3-master
 ExecStopPost=/bin/docker rm -f s3-master

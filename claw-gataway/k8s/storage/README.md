@@ -6,16 +6,17 @@
 
 ```
 storage/
-  config.sh          # 部署参数（IP、peers、Redis Sentinel、密钥等）
+  config.sh          # 部署参数（IP、peers、密钥等）
   install.sh         # 一键安装
   templates/         # filer.toml、security.toml、config.json、systemd 单元
 ```
 
 ## 安装
 
-1. 编辑 `config.sh`（至少设置 `STORAGE_NODE_IP`、`STORAGE_MASTER_PEERS`、Redis 密码）
-2. gRPC mTLS 证书：默认由 `install.sh` 自动生成到 `${STORAGE_DATA_ROOT}/data/cert/`；生产环境可自备证书并设 `STORAGE_GRPC_TLS_AUTO_CERT=false`
-3. 在存储节点上执行：
+1. 编辑 `config.sh`（至少设置 `STORAGE_NODE_IP`、`STORAGE_MASTER_PEERS`）
+2. Filer 元数据使用本地 **leveldb2**（`templates/filer.toml`，目录 `/data/filerldb2`）
+3. gRPC mTLS 证书：默认由 `install.sh` 自动生成到 `${STORAGE_DATA_ROOT}/data/cert/`；生产环境可自备证书并设 `STORAGE_GRPC_TLS_AUTO_CERT=false`
+4. 在存储节点上执行：
 
 ```bash
 sudo bash /path/to/claw-gataway/k8s/storage/install.sh

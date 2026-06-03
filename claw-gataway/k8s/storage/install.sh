@@ -51,20 +51,6 @@ VOLUME_GRPC_PORT="$(grpc_port "${STORAGE_VOLUME_PORT}")"
 FILER_GRPC_PORT="$(grpc_port "${STORAGE_FILER_PORT}")"
 S3_GRPC_PORT="$(grpc_port "${STORAGE_S3_PORT}")"
 
-redis_addrs_json() {
-  local IFS=,
-  local out=""
-  for addr in ${STORAGE_REDIS_SENTINEL_ADDRS}; do
-    addr="$(echo "${addr}" | xargs)"
-    [[ -z "${addr}" ]] && continue
-    if [[ -n "${out}" ]]; then
-      out+=", "
-    fi
-    out+="\"${addr}\""
-  done
-  echo "[${out}]"
-}
-
 render_file() {
   local src="$1"
   local dst="$2"
@@ -93,9 +79,6 @@ render_file() {
   content="${content//__WRAPPER_SECRET_KEY__/${STORAGE_WRAPPER_SECRET_KEY}}"
   content="${content//__S3_ACCESS_KEY__/${STORAGE_S3_ACCESS_KEY}}"
   content="${content//__S3_SECRET_KEY__/${STORAGE_S3_SECRET_KEY}}"
-  content="${content//__REDIS_SENTINEL_MASTER__/${STORAGE_REDIS_SENTINEL_MASTER}}"
-  content="${content//__REDIS_PASSWORD__/${STORAGE_REDIS_PASSWORD}}"
-  content="${content//__REDIS_SENTINEL_ADDRS_JSON__/$(redis_addrs_json)}"
   printf '%s\n' "${content}" > "${dst}"
 }
 
@@ -149,7 +132,6 @@ ensure_grpc_certs() {
 
   local tmp
   tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp}"' RETURN
 
   openssl genrsa -out "${tmp}/ca.key" 4096 2>/dev/null
   openssl req -new -x509 -days 3650 -key "${tmp}/ca.key" -out "${tmp}/ca.crt" \
@@ -194,6 +176,7 @@ EOF
   install -m 0644 "${tmp}/server.crt" "${server_crt}"
   install -m 0600 "${tmp}/server.key" "${server_key}"
   chmod -R a+rX "${cert_dir}"
+  rm -rf "${tmp}"
 
   info "gRPC TLS 证书已生成（含 SAN: ${STORAGE_NODE_IP}, 127.0.0.1）"
 }
