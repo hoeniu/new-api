@@ -60,8 +60,8 @@ VLLM_RELEASE_NAME="vllm"
 VLLM_MODEL_NAME="Qwen3.5-35B-A3B-FP8"
 VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
 # vLLM 镜像（Qwen3.5 MoE 架构 qwen3_5_moe 需 vLLM >= 0.17.1，推荐 v0.19.0）
-VLLM_IMAGE_REPO="vllm/vllm-openai"
-VLLM_IMAGE_TAG="latest"
+VLLM_IMAGE_REPO="registry-public.lenovo.com/newapi/new-api"
+VLLM_IMAGE_TAG="vllmopenai0.22"
 # 额外启动参数（JSON 数组，每项为一个 CLI 参数）
 VLLM_EXTRA_ARGS_JSON='["--tensor-parallel-size","2","--enable-expert-parallel","--language-model-only","--reasoning-parser","qwen3","--max-model-len","8192","--gpu-memory-utilization","0.90"]'
 # GPU: auto | true | false

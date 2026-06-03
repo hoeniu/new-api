@@ -14,7 +14,7 @@ STORAGE_DATA_ROOT="${STORAGE_DATA_ROOT:-/data/server/s3}"
 STORAGE_COMPONENTS="${STORAGE_COMPONENTS:-master,volume,filer,s3}"
 
 # 镜像
-STORAGE_SEAWEEDFS_IMAGE="${STORAGE_SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.31}"
+STORAGE_SEAWEEDFS_IMAGE="${STORAGE_SEAWEEDFS_IMAGE:-registry-public.lenovo.com/newapi/new-api:seaweedfs430}"
 STORAGE_WRAPPER_IMAGE="${STORAGE_WRAPPER_IMAGE:-registry-public.lenovo.com/earth_system/seaweedfs-wrapper:3.71}"
 
 # Volume
