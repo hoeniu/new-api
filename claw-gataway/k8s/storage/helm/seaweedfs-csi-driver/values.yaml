@@ -3,7 +3,6 @@ seaweedfsFiler: "192.168.137.114:7202"
 storageClassName: seaweedfs-storage
 storageClassVolumeBindingMode: Immediate
 isDefaultStorageClass: false
-tlsSecret: ""
 #logVerbosity: 4
 #cacheCapacityMB: 0
 #cacheMetaTtlSec: 60

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # New API Kubernetes 一键部署脚本
-# 使用前请修改下方「必填配置」中的环境变量，然后执行: ./install.sh
+# 使用前请修改 install.config.sh，然后执行: ./install.sh
 #
-# 仅安装 SeaweedFS 存储（宿主机 systemd，与 K8s/vLLM 无关）:
+# 仅安装 SeaweedFS 存储 + CSI（宿主机 systemd + Helm）:
 #   sudo ./install.sh storage
 # 或在完整部署时设置 DEPLOY_STORAGE=true
 #
@@ -11,81 +11,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# =============================================================================
-# 必填配置 — 部署前请修改以下变量
-# =============================================================================
-
-# Kubernetes 命名空间
-NAMESPACE="new-api"
-
-# New API 镜像
-NEW_API_IMAGE="registry-public.lenovo.com/newapi/new-api:new-api-v1"
-
-# PostgreSQL / Redis 镜像
-POSTGRES_IMAGE="registry-public.lenovo.com/newapi/postgres:15"
-REDIS_IMAGE="registry-public.lenovo.com/newapi/redis:latest"
-
-# 管理员账号（首次部署自动初始化，跳过 Web 向导）
-INIT_ADMIN_USERNAME="admin"
-INIT_ADMIN_PASSWORD="ChangeMe123456"
-
-# Web Access Token：用于 API 调用鉴权（Authorization 请求头，最长 32 字符）
-# 示例: curl -H "Authorization: ${INIT_WEB_ACCESS_TOKEN}" -H "New-Api-User: 1" http://<host>:30080/api/user/self
-INIT_WEB_ACCESS_TOKEN="w2h6nb+FO1cmYTg4aYvfjvflMkRyyZRn"
-
-# 使用模式: external（对外运营，默认）| self（自用）| demo（演示站点）
-INIT_USAGE_MODE="external"
-
-# Session 密钥（至少 32 字符，生产环境务必修改）
-SESSION_SECRET="r7MG1tbacA4eg2fAJDvrE0qri2w1ztLqCTq5HI50"
-
-# PostgreSQL
-POSTGRES_USER="root"
-POSTGRES_PASSWORD="123456"
-POSTGRES_DB="new-api"
-
-# Redis
-REDIS_PASSWORD="123456"
-
-# NodePort 对外端口（30000-32767）
-NODE_PORT="30080"
-
-# 本地数据目录（hostPath 挂载到节点本机）
-DATA_HOST_PATH="/data"
-PG_DATA_HOST_PATH="/data/pgdata"
-
-# vLLM 模型服务（Helm chart-helm，本地 hostPath 挂载）
-DEPLOY_VLLM="true"
-VLLM_RELEASE_NAME="vllm"
-VLLM_MODEL_NAME="Qwen3.5-35B-A3B-FP8"
-VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
-# vLLM 镜像（Qwen3.5 MoE 架构 qwen3_5_moe 需 vLLM >= 0.17.1，推荐 v0.19.0）
-VLLM_IMAGE_REPO="registry-public.lenovo.com/newapi/new-api"
-VLLM_IMAGE_TAG="vllmopenai0.22"
-# 额外启动参数（JSON 数组，每项为一个 CLI 参数）
-VLLM_EXTRA_ARGS_JSON='["--tensor-parallel-size","2","--enable-expert-parallel","--language-model-only","--reasoning-parser","qwen3","--max-model-len","8192","--gpu-memory-utilization","0.90"]'
-# GPU: auto | true | false
-VLLM_GPU_ENABLED="auto"
-# 仅当集群已创建 RuntimeClass 时填写（kubectl get runtimeclass）
-VLLM_GPU_RUNTIME_CLASS=""
-
-# vLLM 自动注册到 New API（渠道 + API Token）
-AUTO_REGISTER_VLLM="true"
-VLLM_CHANNEL_NAME="vllm"
-VLLM_CHANNEL_BASE_URL="http://vllm-service.new-api.svc.cluster.local"
-VLLM_CHANNEL_KEY="vllm"
-VLLM_TOKEN_NAME="auto-vllm"
-NEW_API_ROOT_USER_ID="1"
-# 自动设置模型倍率（ModelRatio / CompletionRatio，默认均为 1）
-AUTO_SETUP_MODEL_PRICING="true"
-VLLM_MODEL_RATIO="1"
-
-# SeaweedFS S3 存储（宿主机 Docker+systemd，非 K8s；与 vLLM 本地模型无关）
-# 配置见 storage/config.sh；仅存储: sudo ./install.sh storage
-DEPLOY_STORAGE="true"
-
-SQL_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
-REDIS_CONN_STRING="redis://:${REDIS_PASSWORD}@redis:6379"
+INSTALL_CONFIG="${SCRIPT_DIR}/install.config.sh"
+if [[ ! -f "${INSTALL_CONFIG}" ]]; then
+  echo "[ERROR] 缺少配置文件: ${INSTALL_CONFIG}" >&2
+  exit 1
+fi
+# shellcheck source=install.config.sh
+source "${INSTALL_CONFIG}"
 
 # =============================================================================
 # 以下为部署逻辑，一般无需修改
@@ -140,6 +72,9 @@ calc_total_steps() {
     if [[ "${AUTO_REGISTER_VLLM}" == "true" ]]; then
       TOTAL_STEPS=5
     fi
+  fi
+  if [[ "${DEPLOY_STORAGE}" == "true" ]]; then
+    TOTAL_STEPS=$((TOTAL_STEPS + 1))
   fi
 }
 
@@ -418,19 +353,155 @@ PY
   fi
 }
 
-deploy_storage() {
+resolve_storage_node_ip() {
+  if [[ -n "${STORAGE_NODE_IP}" ]]; then
+    echo "${STORAGE_NODE_IP}"
+    return 0
+  fi
+  if [[ -n "${NODE_IP:-}" ]]; then
+    echo "${NODE_IP}"
+    return 0
+  fi
+  local ip
+  ip="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)"
+  if [[ -z "${ip}" ]]; then
+    ip="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}' 2>/dev/null || true)"
+  fi
+  if [[ -z "${ip}" ]]; then
+    error "无法解析 STORAGE_NODE_IP，请在 install.config.sh 中设置 STORAGE_NODE_IP"
+    exit 1
+  fi
+  echo "${ip}"
+}
+
+resolve_seaweedfs_filer() {
+  if [[ -n "${SEAWEEDFS_FILER}" ]]; then
+    echo "${SEAWEEDFS_FILER}"
+    return 0
+  fi
+  echo "$(resolve_storage_node_ip):${STORAGE_FILER_PORT}"
+}
+
+create_csi_tls_secret() {
+  local cert_dir="${STORAGE_DATA_ROOT}/data/cert"
+  local ca_crt="${cert_dir}/ca.crt"
+  local server_crt="${cert_dir}/server.crt"
+  local server_key="${cert_dir}/server.key"
+
+  if [[ ! -f "${ca_crt}" || ! -f "${server_crt}" || ! -f "${server_key}" ]]; then
+    error "CSI TLS 证书不存在: ${cert_dir}（请先完成宿主机 SeaweedFS 安装）"
+    exit 1
+  fi
+
+  info "创建/更新 CSI TLS Secret: ${CSI_NAMESPACE}/${CSI_TLS_SECRET_NAME}"
+  kubectl -n "${CSI_NAMESPACE}" create secret generic "${CSI_TLS_SECRET_NAME}" \
+    --from-file=tls.crt="${server_crt}" \
+    --from-file=tls.key="${server_key}" \
+    --from-file=ca.crt="${ca_crt}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+}
+
+deploy_storage_csi() {
+  if [[ "${DEPLOY_STORAGE_CSI}" != "true" ]]; then
+    info "跳过 SeaweedFS CSI（DEPLOY_STORAGE_CSI=${DEPLOY_STORAGE_CSI}）"
+    return 0
+  fi
+
+  require_cmd helm
+  require_cmd kubectl
+
+  local chart="${SCRIPT_DIR}/storage/helm/seaweedfs-csi-driver"
+  if [[ ! -d "${chart}" ]]; then
+    error "未找到 CSI Helm chart: ${chart}"
+    exit 1
+  fi
+
+  local filer
+  filer="$(resolve_seaweedfs_filer)"
+  info "部署 SeaweedFS CSI Driver（filer=${filer}, StorageClass=${STORAGE_CLASS_NAME}）..."
+
+  if [[ -n "${CSI_TLS_SECRET_NAME}" && "${CSI_SECURITY_ENABLED}" == "true" ]]; then
+    create_csi_tls_secret
+  fi
+
+  local -a helm_args=(
+    upgrade --install "${CSI_RELEASE_NAME}" "${chart}"
+    -n "${CSI_NAMESPACE}"
+    --create-namespace
+    --set "seaweedfsFiler=${filer}"
+    --set "storageClassName=${STORAGE_CLASS_NAME}"
+    --set "security.enabled=${CSI_SECURITY_ENABLED}"
+  )
+
+  if [[ -n "${CSI_TLS_SECRET_NAME}" ]]; then
+    helm_args+=(--set "tlsSecret=${CSI_TLS_SECRET_NAME}")
+  else
+    helm_args+=(--set "tlsSecret=")
+  fi
+
+  helm "${helm_args[@]}"
+
+  info "等待 CSI Controller 就绪..."
+  kubectl -n "${CSI_NAMESPACE}" rollout status "deployment/${CSI_RELEASE_NAME}-controller" --timeout=300s
+  info "等待 CSI Node 就绪..."
+  kubectl -n "${CSI_NAMESPACE}" rollout status "daemonset/${CSI_RELEASE_NAME}-node" --timeout=300s
+}
+
+deploy_storage_host() {
   local storage_install="${SCRIPT_DIR}/storage/install.sh"
   if [[ ! -f "${storage_install}" ]]; then
     error "未找到存储安装脚本: ${storage_install}"
     exit 1
   fi
-  info "安装 SeaweedFS 存储（宿主机，见 storage/config.sh）..."
-  bash "${storage_install}"
+
+  local node_ip
+  node_ip="$(resolve_storage_node_ip)"
+  info "安装 SeaweedFS 存储（宿主机 ${node_ip}，见 storage/config.sh）..."
+
+  STORAGE_NODE_IP="${node_ip}" \
+  STORAGE_DATA_ROOT="${STORAGE_DATA_ROOT}" \
+  STORAGE_S3_PORT="${STORAGE_S3_PORT}" \
+  STORAGE_S3_ACCESS_KEY="${STORAGE_S3_ACCESS_KEY}" \
+  STORAGE_S3_SECRET_KEY="${STORAGE_S3_SECRET_KEY}" \
+    bash "${storage_install}"
+}
+
+print_storage_summary() {
+  local node_ip filer s3_endpoint
+  node_ip="$(resolve_storage_node_ip)"
+  filer="$(resolve_seaweedfs_filer)"
+  s3_endpoint="http://${node_ip}:${STORAGE_S3_PORT}"
+  echo "  Filer:           ${filer}"
+  echo "  S3 端点:         ${s3_endpoint}"
+  echo "  S3 Access Key:   ${STORAGE_S3_ACCESS_KEY}"
+  echo "  S3 Secret Key:   ${STORAGE_S3_SECRET_KEY}"
+  echo "  StorageClass:    ${STORAGE_CLASS_NAME}"
+  if [[ "${DEPLOY_STORAGE_CSI}" == "true" ]]; then
+    echo "  CSI Release:     ${CSI_RELEASE_NAME} (${CSI_NAMESPACE})"
+  fi
+}
+
+deploy_storage() {
+  local step_label="${1:-}"
+  if [[ -n "${step_label}" ]]; then
+    info "[${step_label}] SeaweedFS 宿主机存储 + CSI..."
+  fi
+  deploy_storage_host
+  deploy_storage_csi
 }
 
 main() {
   if [[ "${1:-}" == "storage" ]]; then
+    require_cmd kubectl
     deploy_storage
+    echo ""
+    info "SeaweedFS 存储与 CSI 安装完成"
+    print_storage_summary
+    echo ""
+    echo "  AWS CLI 示例:"
+    echo "    export AWS_ACCESS_KEY_ID=${STORAGE_S3_ACCESS_KEY}"
+    echo "    export AWS_SECRET_ACCESS_KEY=${STORAGE_S3_SECRET_KEY}"
+    echo "    aws --endpoint-url http://$(resolve_storage_node_ip):${STORAGE_S3_PORT} s3 ls"
     exit 0
   fi
 
@@ -495,7 +566,7 @@ main() {
   fi
 
   if [[ "${DEPLOY_STORAGE}" == "true" ]]; then
-    deploy_storage
+    deploy_storage "${TOTAL_STEPS}/${TOTAL_STEPS}"
   fi
 
   echo ""
@@ -540,7 +611,13 @@ main() {
     echo ""
     warn "请确保模型文件已放入 ${VLLM_MODEL_HOST_PATH}（含 config.json 等权重文件）"
   fi
-  warn "生产环境请修改脚本顶部的默认密码与 Token！"
+  if [[ "${DEPLOY_STORAGE}" == "true" ]]; then
+    print_storage_summary
+    echo ""
+    echo "  动态卷示例:"
+    echo "    storageClassName: ${STORAGE_CLASS_NAME}"
+  fi
+  warn "生产环境请修改 install.config.sh 中的默认密码与 Token！"
 }
 
 main "$@"

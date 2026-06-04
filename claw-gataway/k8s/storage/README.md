@@ -39,7 +39,7 @@ Master peers 三台需一致：`10.199.117.2:7200,10.199.117.3:7200,10.199.117.4
 
 ## 与 install.sh 联动
 
-完整 K8s 部署时，在 `install.sh` 顶部设置：
+完整 K8s 部署时，在 `install.config.sh` 设置：
 
 ```bash
 DEPLOY_STORAGE="true"
