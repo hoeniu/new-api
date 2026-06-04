@@ -12,7 +12,7 @@ NEW_API_IMAGE="registry-public.lenovo.com/newapi/new-api:new-api-v1"
 POSTGRES_IMAGE="registry-public.lenovo.com/newapi/postgres:15"
 REDIS_IMAGE="registry-public.lenovo.com/newapi/redis:latest"
 
-# 管理员账号（首次部署自动初始化，跳过 Web 向导）
+# newapi管理员账号（首次部署自动初始化，跳过 Web 向导）
 INIT_ADMIN_USERNAME="admin"
 INIT_ADMIN_PASSWORD="ChangeMe123456"
 
