@@ -44,6 +44,34 @@ require_cmd() {
   fi
 }
 
+validate_vllm_config() {
+  if [[ "${DEPLOY_VLLM:-false}" != "true" ]]; then
+    return 0
+  fi
+  if ! [[ "${VLLM_REPLICA_COUNT:-1}" =~ ^[1-9][0-9]*$ ]]; then
+    error "VLLM_REPLICA_COUNT 必须是正整数"
+    exit 1
+  fi
+  if ! [[ "${VLLM_GPU_COUNT:-1}" =~ ^[1-9][0-9]*$ ]]; then
+    error "VLLM_GPU_COUNT 必须是正整数"
+    exit 1
+  fi
+  if [[ "${VLLM_AUTOSCALING_ENABLED:-false}" == "true" ]]; then
+    if ! [[ "${VLLM_AUTOSCALING_MIN_REPLICAS:-1}" =~ ^[1-9][0-9]*$ ]]; then
+      error "VLLM_AUTOSCALING_MIN_REPLICAS 必须是正整数"
+      exit 1
+    fi
+    if ! [[ "${VLLM_AUTOSCALING_MAX_REPLICAS:-1}" =~ ^[1-9][0-9]*$ ]]; then
+      error "VLLM_AUTOSCALING_MAX_REPLICAS 必须是正整数"
+      exit 1
+    fi
+    if (( VLLM_AUTOSCALING_MAX_REPLICAS < VLLM_AUTOSCALING_MIN_REPLICAS )); then
+      error "VLLM_AUTOSCALING_MAX_REPLICAS 不得小于 VLLM_AUTOSCALING_MIN_REPLICAS"
+      exit 1
+    fi
+  fi
+}
+
 parse_args() {
   case "${1:-}" in
     volume)
@@ -221,25 +249,40 @@ deploy_vllm_on_master() {
 
   require_cmd sshpass
 
-  local worker_ip gpu_enabled helm_gpu_count
+  local worker_ip gpu_enabled helm_gpu_count helm_replica_count required_gpus
+  local autoscaling_enabled autoscaling_min autoscaling_max deploy_replicas
   worker_ip="$(resolve_worker_ip)"
   WORKER_K8S_NODE_NAME="$(resolve_worker_k8s_node "${worker_ip}")"
   sync_chart_to_master
+
+  helm_replica_count="${VLLM_REPLICA_COUNT:-1}"
+  helm_gpu_count="${VLLM_GPU_COUNT:-2}"
+  autoscaling_enabled="${VLLM_AUTOSCALING_ENABLED:-false}"
+  autoscaling_min="${VLLM_AUTOSCALING_MIN_REPLICAS:-1}"
+  autoscaling_max="${VLLM_AUTOSCALING_MAX_REPLICAS:-4}"
+  required_gpus=$(( helm_replica_count * helm_gpu_count ))
+  deploy_replicas="${helm_replica_count}"
+  if [[ "${autoscaling_enabled}" == "true" ]]; then
+    required_gpus=$(( autoscaling_min * helm_gpu_count ))
+    deploy_replicas="${autoscaling_min}"
+    info "vLLM HPA: ${autoscaling_min}-${autoscaling_max} 副本，每 Pod ${helm_gpu_count} GPU"
+  else
+    info "vLLM 副本: ${helm_replica_count}，每 Pod ${helm_gpu_count} GPU（本节点至少需要 ${required_gpus} 张 GPU）"
+  fi
 
   info "Worker K8s 节点: ${WORKER_K8S_NODE_NAME} (${worker_ip})"
   info "模型目录（hostPath）: ${VLLM_MODEL_HOST_PATH}"
   mkdir -p "${VLLM_MODEL_HOST_PATH}"
 
   gpu_enabled="${VLLM_GPU_ENABLED}"
-  helm_gpu_count="${VLLM_GPU_COUNT}"
   if [[ "${gpu_enabled}" == "auto" ]]; then
     if ssh_exec "kubectl get nodes '${WORKER_K8S_NODE_NAME}' -o jsonpath='{.status.allocatable.nvidia\\.com/gpu}'" \
-      | awk -v n="${helm_gpu_count}" '$1+0 >= n+0 { ok=1 } END { exit !ok }'; then
+      | awk -v need="${required_gpus}" '$1+0 >= need { ok=1 } END { exit !ok }'; then
       gpu_enabled="true"
-      info "Worker 节点 GPU 可用 (${helm_gpu_count} 张)"
+      info "Worker 节点 GPU 可用（≥ ${required_gpus} 张）"
     else
       gpu_enabled="false"
-      warn "Worker 节点 GPU 不足，vLLM 将以 CPU 模式部署"
+      warn "Worker 节点 GPU 不足 ${required_gpus} 张，vLLM 将以 CPU 模式部署"
     fi
   fi
 
@@ -258,6 +301,10 @@ WORKER_K8S_NODE_NAME='${WORKER_K8S_NODE_NAME}'
 REMOTE_CHART='${REMOTE_CHART_DIR}/chart-helm'
 GPU_ENABLED='${gpu_enabled}'
 GPU_COUNT='${helm_gpu_count}'
+REPLICA_COUNT='${deploy_replicas}'
+AUTOSCALING_ENABLED='${autoscaling_enabled}'
+AUTOSCALING_MIN='${autoscaling_min}'
+AUTOSCALING_MAX='${autoscaling_max}'
 
 helm_args=(
   upgrade --install "\${VLLM_RELEASE_NAME}" "\${REMOTE_CHART}"
@@ -269,8 +316,19 @@ helm_args=(
   --set-json "extraArgs=\${VLLM_EXTRA_ARGS_JSON}"
   --set "extraInit.storage.hostPath=\${VLLM_MODEL_HOST_PATH}"
   --set "gpu.enabled=\${GPU_ENABLED}"
+  --set "replicaCount=\${REPLICA_COUNT}"
   --set-json "nodeSelector={\"kubernetes.io/hostname\":\"\${WORKER_K8S_NODE_NAME}\"}"
 )
+
+if [[ "\${AUTOSCALING_ENABLED}" == "true" ]]; then
+  helm_args+=(
+    --set "autoscaling.enabled=true"
+    --set "autoscaling.minReplicas=\${AUTOSCALING_MIN}"
+    --set "autoscaling.maxReplicas=\${AUTOSCALING_MAX}"
+  )
+else
+  helm_args+=(--set "autoscaling.enabled=false")
+fi
 
 if [[ "\${GPU_ENABLED}" == "true" ]]; then
   helm_args+=(--set "gpu.count=\${GPU_COUNT}")
@@ -517,6 +575,11 @@ print_summary() {
     echo "  vLLM Release:    ${VLLM_RELEASE_NAME} (${NAMESPACE})"
     echo "  vLLM 模型:       ${VLLM_MODEL_NAME}"
     echo "  模型目录:        ${VLLM_MODEL_HOST_PATH}"
+    if [[ "${VLLM_AUTOSCALING_ENABLED:-false}" == "true" ]]; then
+      echo "  vLLM 副本:       HPA ${VLLM_AUTOSCALING_MIN_REPLICAS:-1}-${VLLM_AUTOSCALING_MAX_REPLICAS:-4} × ${VLLM_GPU_COUNT:-2} GPU/Pod"
+    else
+      echo "  vLLM 副本:       ${VLLM_REPLICA_COUNT:-1} × ${VLLM_GPU_COUNT:-2} GPU/Pod"
+    fi
     echo "  集群内 Service:  http://${VLLM_RELEASE_NAME}-service.${NAMESPACE}.svc.cluster.local"
     if [[ "${AUTO_REGISTER_VLLM}" == "true" && -n "${GENERATED_API_TOKEN:-}" ]]; then
       echo ""
@@ -547,6 +610,7 @@ main() {
   verify_master_cluster
 
   if [[ "${VLLM_ONLY}" == "1" ]]; then
+    validate_vllm_config
     deploy_vllm_on_master
     if [[ "${AUTO_REGISTER_VLLM}" == "true" ]]; then
       register_vllm_in_new_api
@@ -556,6 +620,7 @@ main() {
   fi
 
   deploy_worker_volume
+  validate_vllm_config
   deploy_vllm_on_master
   if [[ "${AUTO_REGISTER_VLLM}" == "true" ]]; then
     register_vllm_in_new_api

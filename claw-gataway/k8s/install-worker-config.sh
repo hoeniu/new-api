@@ -20,10 +20,17 @@ VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
 VLLM_IMAGE_REPO="registry-public.lenovo.com/newapi/new-api"
 VLLM_IMAGE_TAG="vllmopenai0.22"
 VLLM_EXTRA_ARGS_JSON='["--tensor-parallel-size","2","--enable-expert-parallel","--language-model-only","--reasoning-parser","qwen3","--max-model-len","8192","--gpu-memory-utilization","0.90"]'
+# Deployment 副本数（Worker 节点上总 GPU ≥ VLLM_REPLICA_COUNT × VLLM_GPU_COUNT）
+VLLM_REPLICA_COUNT="1"
+# 每个 Pod 请求的 GPU 数（与 --tensor-parallel-size 对齐）
+VLLM_GPU_COUNT="2"
 # GPU: auto | true | false
 VLLM_GPU_ENABLED="auto"
-VLLM_GPU_COUNT="2"
 VLLM_GPU_RUNTIME_CLASS=""
+# HPA 自动扩缩（GPU 场景通常固定副本）
+VLLM_AUTOSCALING_ENABLED="false"
+VLLM_AUTOSCALING_MIN_REPLICAS="1"
+VLLM_AUTOSCALING_MAX_REPLICAS="4"
 
 # vLLM 自动注册到 Master 上的 New API
 AUTO_REGISTER_VLLM="true"

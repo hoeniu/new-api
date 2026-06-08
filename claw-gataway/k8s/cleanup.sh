@@ -15,7 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 INSTALL_CONFIG="${SCRIPT_DIR}/install.config.sh"
 if [[ ! -f "${INSTALL_CONFIG}" ]]; then
-  echo "[ERROR] 缺少配置文件: ${INSTALL_CONFIG}" >&2
+  INSTALL_CONFIG="${SCRIPT_DIR}/install-master-config.sh"
+fi
+if [[ ! -f "${INSTALL_CONFIG}" ]]; then
+  echo "[ERROR] 缺少配置文件: install.config.sh 或 install-master-config.sh" >&2
   exit 1
 fi
 # shellcheck source=install.config.sh

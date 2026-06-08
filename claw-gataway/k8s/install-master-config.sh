@@ -50,11 +50,20 @@ VLLM_MODEL_HOST_PATH="/data/models/${VLLM_MODEL_NAME}"
 VLLM_IMAGE_REPO="registry-public.lenovo.com/newapi/new-api"
 VLLM_IMAGE_TAG="vllmopenai0.22"
 # 额外启动参数（JSON 数组，每项为一个 CLI 参数）
+# --tensor-parallel-size 须与 VLLM_GPU_COUNT 一致（每个 Pod 占用的 GPU 数）
 VLLM_EXTRA_ARGS_JSON='["--tensor-parallel-size","2","--enable-expert-parallel","--language-model-only","--reasoning-parser","qwen3","--max-model-len","8192","--gpu-memory-utilization","0.90"]'
+# Deployment 副本数（多副本时 Service 负载均衡；集群总 GPU ≥ VLLM_REPLICA_COUNT × VLLM_GPU_COUNT）
+VLLM_REPLICA_COUNT="1"
+# 每个 Pod 请求的 GPU 数（与 --tensor-parallel-size 对齐）
+VLLM_GPU_COUNT="2"
 # GPU: auto | true | false
 VLLM_GPU_ENABLED="auto"
 # 仅当集群已创建 RuntimeClass 时填写（kubectl get runtimeclass）
 VLLM_GPU_RUNTIME_CLASS=""
+# HPA 自动扩缩（GPU 场景通常固定副本；开启后忽略 VLLM_REPLICA_COUNT，以 min/max 为准）
+VLLM_AUTOSCALING_ENABLED="false"
+VLLM_AUTOSCALING_MIN_REPLICAS="1"
+VLLM_AUTOSCALING_MAX_REPLICAS="4"
 
 # vLLM 自动注册到 New API（渠道 + API Token）
 AUTO_REGISTER_VLLM="true"

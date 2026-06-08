@@ -13,7 +13,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 INSTALL_CONFIG="${SCRIPT_DIR}/install.config.sh"
 if [[ ! -f "${INSTALL_CONFIG}" ]]; then
-  echo "[ERROR] 缺少配置文件: ${INSTALL_CONFIG}" >&2
+  INSTALL_CONFIG="${SCRIPT_DIR}/install-master-config.sh"
+fi
+if [[ ! -f "${INSTALL_CONFIG}" ]]; then
+  echo "[ERROR] 缺少配置文件: install.config.sh 或 install-master-config.sh" >&2
   exit 1
 fi
 # shellcheck source=install.config.sh
@@ -63,6 +66,30 @@ validate_config() {
       exit 1
       ;;
   esac
+  if [[ "${DEPLOY_VLLM:-false}" == "true" ]]; then
+    if ! [[ "${VLLM_REPLICA_COUNT:-1}" =~ ^[1-9][0-9]*$ ]]; then
+      error "VLLM_REPLICA_COUNT 必须是正整数"
+      exit 1
+    fi
+    if ! [[ "${VLLM_GPU_COUNT:-1}" =~ ^[1-9][0-9]*$ ]]; then
+      error "VLLM_GPU_COUNT 必须是正整数"
+      exit 1
+    fi
+    if [[ "${VLLM_AUTOSCALING_ENABLED:-false}" == "true" ]]; then
+      if ! [[ "${VLLM_AUTOSCALING_MIN_REPLICAS:-1}" =~ ^[1-9][0-9]*$ ]]; then
+        error "VLLM_AUTOSCALING_MIN_REPLICAS 必须是正整数"
+        exit 1
+      fi
+      if ! [[ "${VLLM_AUTOSCALING_MAX_REPLICAS:-1}" =~ ^[1-9][0-9]*$ ]]; then
+        error "VLLM_AUTOSCALING_MAX_REPLICAS 必须是正整数"
+        exit 1
+      fi
+      if (( VLLM_AUTOSCALING_MAX_REPLICAS < VLLM_AUTOSCALING_MIN_REPLICAS )); then
+        error "VLLM_AUTOSCALING_MAX_REPLICAS 不得小于 VLLM_AUTOSCALING_MIN_REPLICAS"
+        exit 1
+      fi
+    fi
+  fi
 }
 
 calc_total_steps() {
@@ -103,20 +130,39 @@ render_new_api_manifest() {
 deploy_vllm() {
   require_cmd helm
 
+  local helm_replica_count="${VLLM_REPLICA_COUNT:-1}"
+  local helm_gpu_count="${VLLM_GPU_COUNT:-2}"
+  local autoscaling_enabled="${VLLM_AUTOSCALING_ENABLED:-false}"
+  local autoscaling_min="${VLLM_AUTOSCALING_MIN_REPLICAS:-1}"
+  local autoscaling_max="${VLLM_AUTOSCALING_MAX_REPLICAS:-4}"
+  local required_gpus=$(( helm_replica_count * helm_gpu_count ))
+
   info "[4/${TOTAL_STEPS}] 部署 vLLM 模型 (${VLLM_MODEL_NAME})..."
   mkdir -p "${VLLM_MODEL_HOST_PATH}"
   info "vLLM 模型目录: ${VLLM_MODEL_HOST_PATH}"
 
+  if [[ "${autoscaling_enabled}" == "true" ]]; then
+    required_gpus=$(( autoscaling_min * helm_gpu_count ))
+    info "vLLM HPA: ${autoscaling_min}-${autoscaling_max} 副本，每 Pod ${helm_gpu_count} GPU"
+  else
+    info "vLLM 副本: ${helm_replica_count}，每 Pod ${helm_gpu_count} GPU（集群至少需要 ${required_gpus} 张 GPU）"
+  fi
+
   local gpu_enabled="${VLLM_GPU_ENABLED}"
   if [[ "${gpu_enabled}" == "auto" ]]; then
     if kubectl get nodes -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null \
-      | awk '$1+0>0 { found=1 } END { exit !found }'; then
+      | awk -v need="${required_gpus}" '{ s+=$1+0 } END { exit !(s>=need) }'; then
       gpu_enabled="true"
-      info "检测到 GPU 节点"
+      info "检测到集群 GPU 数量满足 vLLM 需求（≥ ${required_gpus}）"
     else
       gpu_enabled="false"
-      warn "未检测到 GPU，vLLM 将以 CPU 模式部署"
+      warn "集群 GPU 不足 ${required_gpus} 张，vLLM 将以 CPU 模式部署"
     fi
+  fi
+
+  local deploy_replicas="${helm_replica_count}"
+  if [[ "${autoscaling_enabled}" == "true" ]]; then
+    deploy_replicas="${autoscaling_min}"
   fi
 
   local -a helm_args=(
@@ -129,10 +175,21 @@ deploy_vllm() {
     --set-json "extraArgs=${VLLM_EXTRA_ARGS_JSON}"
     --set "extraInit.storage.hostPath=${VLLM_MODEL_HOST_PATH}"
     --set "gpu.enabled=${gpu_enabled}"
+    --set "replicaCount=${deploy_replicas}"
   )
 
+  if [[ "${autoscaling_enabled}" == "true" ]]; then
+    helm_args+=(
+      --set "autoscaling.enabled=true"
+      --set "autoscaling.minReplicas=${autoscaling_min}"
+      --set "autoscaling.maxReplicas=${autoscaling_max}"
+    )
+  else
+    helm_args+=(--set "autoscaling.enabled=false")
+  fi
+
   if [[ "${gpu_enabled}" == "true" ]]; then
-    helm_args+=(--set "gpu.count=2")
+    helm_args+=(--set "gpu.count=${helm_gpu_count}")
     if [[ -n "${VLLM_GPU_RUNTIME_CLASS}" ]]; then
       helm_args+=(--set "gpu.runtimeClassName=${VLLM_GPU_RUNTIME_CLASS}")
     fi
@@ -586,6 +643,11 @@ main() {
     echo "  vLLM 渠道:    ${VLLM_CHANNEL_NAME} → ${VLLM_CHANNEL_BASE_URL}"
     echo "  vLLM 模型:    ${VLLM_MODEL_NAME}"
     echo "  模型目录:     ${VLLM_MODEL_HOST_PATH}"
+    if [[ "${VLLM_AUTOSCALING_ENABLED:-false}" == "true" ]]; then
+      echo "  vLLM 副本:    HPA ${VLLM_AUTOSCALING_MIN_REPLICAS:-1}-${VLLM_AUTOSCALING_MAX_REPLICAS:-4} × ${VLLM_GPU_COUNT:-2} GPU/Pod"
+    else
+      echo "  vLLM 副本:    ${VLLM_REPLICA_COUNT:-1} × ${VLLM_GPU_COUNT:-2} GPU/Pod"
+    fi
     if [[ "${AUTO_REGISTER_VLLM}" == "true" && -n "${GENERATED_API_TOKEN:-}" ]]; then
       echo "  API Token:    sk-${GENERATED_API_TOKEN}"
       echo "  模型限制:     ${VLLM_MODEL_NAME}"
