@@ -27,7 +27,9 @@ func resolveUsageTargetUserId(c *gin.Context) (int, error) {
 func parseUsageAggOpts(c *gin.Context) (model.UsageAggOpts, error) {
 	start, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	end, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	if err := model.ValidateUsageTimeRange(start, end); err != nil {
+	off := parseTimezoneOffsetSec(c)
+	start, end, err := model.ResolveUsageTimeRange(start, end, c.Query("start_date"), c.Query("end_date"), off)
+	if err != nil {
 		return model.UsageAggOpts{}, err
 	}
 	uid, err := resolveUsageTargetUserId(c)
@@ -60,7 +62,7 @@ func parseTimezoneOffsetSec(c *gin.Context) int64 {
 	return off
 }
 
-// GetUsageByKey GET /api/usage/by_key — PRD §3，不读 logs：令牌表累计 + 空 by_model。
+// GetUsageByKey GET /api/usage/by_key — 指定 Key 在时间窗内的使用量（Token/额度）与使用次数。
 func GetUsageByKey(c *gin.Context) {
 	o, err := parseUsageAggOpts(c)
 	if err != nil {
@@ -80,14 +82,22 @@ func GetUsageByKey(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "令牌不存在或不属于该用户"})
 		return
 	}
-	payload, err := model.GetUsageByKeyNonLog(o.UserId, o.TokenName, o.StartTs, o.EndTs)
+	off := parseTimezoneOffsetSec(c)
+	payload, err := model.GetUsageByKey(o, off)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"data_source": "main_db.tokens_table",
-		"usage":       payload,
+		"data_source":     "logs.consume",
+		"usage":           payload,
+		"timezone_offset": off,
+		"time_range": gin.H{
+			"start_date": payload.StartDate,
+			"end_date":   payload.EndDate,
+			"start":      o.StartTs,
+			"end":        o.EndTs,
+		},
 	})
 }
 
@@ -123,15 +133,11 @@ func GetUsageOverview(c *gin.Context) {
 	})
 }
 
-// GetUsageDailyTrend GET /api/usage/trend/daily — PRD §5，quota_data 按日聚合。
+// GetUsageDailyTrend GET /api/usage/trend/daily — 时间窗内按自然日返回使用量与使用次数；支持 start_date/end_date。
 func GetUsageDailyTrend(c *gin.Context) {
 	o, err := parseUsageAggOpts(c)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
-		return
-	}
-	if o.TokenName != "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "trend 请勿传 token_name"})
 		return
 	}
 	off := parseTimezoneOffsetSec(c)
@@ -140,28 +146,47 @@ func GetUsageDailyTrend(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	dataSource := "main_db.quota_data"
+	if o.TokenName != "" {
+		dataSource = "logs.consume"
+	}
 	common.ApiSuccess(c, gin.H{
-		"data_source":     "main_db.quota_data",
+		"data_source":     dataSource,
 		"daily":           rows,
 		"timezone_offset": off,
 		"time_range_unix": gin.H{"start": o.StartTs, "end": o.EndTs},
 	})
 }
 
-// GetUsageByModel GET /api/usage/by_model — PRD §6。
+// GetUsageByModel GET /api/usage/by_model — 时间窗内按模型统计使用量与使用次数。
 func GetUsageByModel(c *gin.Context) {
 	o, err := parseUsageAggOpts(c)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 		return
 	}
+	if o.TokenName != "" {
+		ok, err := model.TokenNameBelongsToUser(o.UserId, o.TokenName)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "令牌不存在或不属于该用户"})
+			return
+		}
+	}
 	rows, err := model.GetUsageByModel(o)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	dataSource := "main_db.quota_data"
+	if o.TokenName != "" || o.Group != "" {
+		dataSource = "logs.consume"
+	}
 	common.ApiSuccess(c, gin.H{
-		"data_source":     "main_db.quota_data",
+		"data_source":     dataSource,
 		"by_model":        rows,
 		"time_range_unix": gin.H{"start": o.StartTs, "end": o.EndTs},
 	})
